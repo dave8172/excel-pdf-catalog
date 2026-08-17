@@ -24,7 +24,7 @@ TEMPLATE_FORM_CHOICES = ["auto", *TEMPLATE_FORM_VARIANTS.keys()]
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
-PAGE = """
+PAGE = r"""
 <!doctype html>
 <html lang="en">
 <head>
@@ -61,6 +61,8 @@ PAGE = """
     padding: 12px 14px; border-radius: 10px; margin-top: 18px; font-size: 0.9rem;
   }
   #status { margin-top: 16px; font-size: 0.9rem; color: #9aa0a6; display: none; }
+  #status.done { color: #7ad48c; }
+  #status.failed { color: #ff9a9a; }
 </style>
 </head>
 <body>
@@ -100,10 +102,61 @@ PAGE = """
   </form>
 
   <script>
-    document.getElementById('genForm').addEventListener('submit', function () {
-      document.getElementById('submitBtn').disabled = true;
-      document.getElementById('submitBtn').textContent = 'Generating...';
-      document.getElementById('status').style.display = 'block';
+    document.getElementById('genForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+
+      const form = event.target;
+      const btn = document.getElementById('submitBtn');
+      const status = document.getElementById('status');
+
+      btn.disabled = true;
+      btn.textContent = 'Generating...';
+      status.className = '';
+      status.style.display = 'block';
+      status.textContent = 'Generating... this can take a minute, please keep this tab open.';
+
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          body: new FormData(form),
+        });
+
+        if (!response.ok) {
+          const contentType = response.headers.get('Content-Type') || '';
+          let message = `Export failed (HTTP ${response.status}).`;
+          if (contentType.includes('text/html')) {
+            const html = await response.text();
+            const match = html.match(/<div class="error">([\s\S]*?)<\/div>/);
+            if (match) message = match[1].trim();
+          }
+          status.textContent = message;
+          status.className = 'failed';
+          return;
+        }
+
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const nameMatch = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/);
+        const filename = nameMatch ? decodeURIComponent(nameMatch[1]) : 'output.pdf';
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+
+        status.textContent = 'Done — PDF downloaded.';
+        status.className = 'done';
+      } catch (err) {
+        status.textContent = 'Export failed: network error. Please try again.';
+        status.className = 'failed';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate PDF';
+      }
     });
   </script>
 </body>
