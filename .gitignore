@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+exports/
+uploads/
+
+# Sample/working catalog data stays local; only the shared badge assets are tracked.
+templates/*.xlsx
+templates/*.pdf
+templates/*.png
+!templates/por img.png
+!templates/new img.png
+!templates/por img p6.png
