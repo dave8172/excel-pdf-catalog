@@ -67,7 +67,7 @@ PAGE = r"""
 </head>
 <body>
   <h1>Catalog PDF Exporter</h1>
-  <p class="sub">Upload this week's Excel + template PDF, get the finished catalog back.</p>
+  <p class="sub">Upload this week's product file (Excel or CSV) + template PDF, get the finished catalog back.</p>
 
   {% if error %}
   <div class="error">{{ error }}</div>
@@ -75,8 +75,8 @@ PAGE = r"""
 
   <form id="genForm" method="post" action="/generate" enctype="multipart/form-data">
     <div class="field">
-      <label for="excel">Excel file (.xlsx)</label>
-      <input type="file" id="excel" name="excel" accept=".xlsx" required>
+      <label for="excel">Product file (.xlsx or .csv)</label>
+      <input type="file" id="excel" name="excel" accept=".xlsx,.csv" required>
     </div>
     <div class="field">
       <label for="template">Template PDF (.pdf)</label>
@@ -197,9 +197,10 @@ def generate():
     quality = request.form.get("quality", "normal")
     template_form = request.form.get("template_form", "auto")
 
-    if not excel_file or not excel_file.filename.lower().endswith(".xlsx"):
+    excel_suffix = Path(excel_file.filename).suffix.lower() if excel_file and excel_file.filename else ""
+    if not excel_file or excel_suffix not in (".xlsx", ".csv"):
         return render_template_string(
-            PAGE, template_forms=TEMPLATE_FORM_CHOICES, error="Please upload a valid .xlsx Excel file."
+            PAGE, template_forms=TEMPLATE_FORM_CHOICES, error="Please upload a valid .xlsx or .csv product file."
         ), 400
     if not template_file or not template_file.filename.lower().endswith(".pdf"):
         return render_template_string(
@@ -214,7 +215,7 @@ def generate():
     job_dir = UPLOADS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    excel_path = job_dir / "input.xlsx"
+    excel_path = job_dir / f"input{excel_suffix}"
     template_path = job_dir / "template.pdf"
     excel_file.save(excel_path)
     template_file.save(template_path)

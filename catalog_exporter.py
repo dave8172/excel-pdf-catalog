@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import math
@@ -305,6 +306,36 @@ def cell_to_text(value: object) -> str:
     return "" if value in (None, "") else str(value).strip()
 
 
+def _iter_rows_from_source(excel_path: Path):
+    """Yield each row as a tuple of cell values, from either an .xlsx or a .csv product file."""
+    if excel_path.suffix.lower() == ".csv":
+        raw = excel_path.read_bytes()
+        for encoding in ("utf-8-sig", "cp1252"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = raw.decode("latin-1")
+
+        try:
+            dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+
+        for row in csv.reader(io.StringIO(text), dialect):
+            yield tuple(row)
+        return
+
+    workbook = load_workbook(excel_path, data_only=True, read_only=True)
+    try:
+        for row in workbook.active.iter_rows(values_only=True):
+            yield row
+    finally:
+        workbook.close()
+
+
 def resolve_template_variant(
     excel_path: Path,
     template_pdf: Path,
@@ -314,10 +345,9 @@ def resolve_template_variant(
         return TEMPLATE_FORM_VARIANTS[template_form]
 
     try:
-        workbook = load_workbook(excel_path, data_only=True, read_only=True)
-        sheet = workbook.active
-        first_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True), ())
-        workbook.close()
+        rows = _iter_rows_from_source(excel_path)
+        first_row = next(rows, ())
+        rows.close()
         headers = get_header_indexes(first_row)
         promotion_keys = ("main_price", "sale_price")
         if any(find_header_index(headers, key) is not None for key in promotion_keys):
@@ -329,14 +359,13 @@ def resolve_template_variant(
 
 
 def load_products(excel_path: Path, template_variant: TemplateVariant = "default") -> list[Product]:
-    workbook = load_workbook(excel_path, data_only=True, read_only=True)
-    sheet = workbook.active
-    first_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    rows = _iter_rows_from_source(excel_path)
+    first_row = next(rows, ())
     headers = get_header_indexes(first_row)
     required_headers, missing = find_required_header_indexes(headers)
     if missing:
-        workbook.close()
-        raise ValueError(f"Missing required Excel columns: {', '.join(missing)}")
+        rows.close()
+        raise ValueError(f"Missing required columns in product file: {', '.join(missing)}")
 
     image_col = required_headers["image_src"]
     title_col = required_headers["title"]
@@ -349,7 +378,7 @@ def load_products(excel_path: Path, template_variant: TemplateVariant = "default
     image_position_col = find_header_index(headers, "image_position")
 
     products: list[Product] = []
-    for row_index, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+    for row_index, values in enumerate(rows, start=2):
         title = cell_to_text(values[title_col - 1] if title_col - 1 < len(values) else None)
         image_source = cell_to_text(values[image_col - 1] if image_col - 1 < len(values) else None)
         por_value = values[por_col - 1] if por_col - 1 < len(values) else None
@@ -379,7 +408,6 @@ def load_products(excel_path: Path, template_variant: TemplateVariant = "default
             )
         )
 
-    workbook.close()
     return products
 
 
