@@ -6,14 +6,15 @@
 
 - Repo: git@github.com:dave8172/excel-pdf-catalog.git (private)
 - Also mirrored on a Windows PC at `t:\Docs\Upwork\excel to pdf\excel-pdf` (VS Code + Claude Code). Edits can happen from either copy — GitHub is the source of truth; just `git pull` wherever you didn't make the change before editing there again. This VPS copy is the deployed runtime, so changes made here still need `git push` (see Deploy below) to reach the Windows copy.
-- Input: an Excel file (product data) + a template PDF, uploaded via a mobile-friendly single-page form (`app.py`).
+- Input: a product data file (`.xlsx` or `.csv`, same columns either way) + a template PDF, uploaded via a mobile-friendly single-page form (`app.py`). CSV support (2026-08-23) added via `_iter_rows_from_source()` in `catalog_exporter.py`, which both `resolve_template_variant()` and `load_products()` now go through instead of calling `load_workbook()` directly — handles UTF-8-BOM/cp1252 encoding and comma/semicolon delimiters (Excel's own "Save As CSV" quirks).
 - Output: composed catalog PDF, streamed back as a download. Nothing is retained server-side — each upload gets `uploads/<uuid>/`, deleted ~10s after the response is sent, plus an hourly sweep of anything older than 1h as a backstop.
 - No login/auth by owner's explicit choice — URL is unlisted (DuckDNS subdomain), not indexed, no persistent data at rest to leak.
 
 ## Current state (2026-08-17)
 
 - Live at https://excelpdf.duckdns.org
-- Runs as systemd service `excel-pdf.service` (gunicorn, 2 workers, 300s timeout) bound to `127.0.0.1:8020`
+- Runs as systemd service `excel-pdf.service` (gunicorn, **1 worker**, 300s timeout) bound to `127.0.0.1:8020`. This VPS has 2GB RAM total shared across several other services — see `/root/projects/memory/resource-constraints.md`. 1 worker is intentional, not a bug: `ps`/`systemctl status` will always show 2 processes (gunicorn master + the 1 worker) — that's normal gunicorn architecture, not 2 redundant instances.
+- (2026-08-17) `--max-requests 100 --max-requests-jitter 20` added to ExecStart — recycles the worker periodically so per-process RSS doesn't creep up across repeated PDF exports (Pillow/reportlab/pypdf don't always release freed memory back to the OS within a long-lived process). Also added `MemoryHigh=400M` (soft cgroup throttle) and `OOMScoreAdjust=300` (bias the kernel to kill this best-effort personal tool before critical services like postgres/nginx/sshd/tailscaled if the box ever hits real memory pressure). Trigger: a service restart logged `342.3M memory peak, 157.2M memory swap peak` during a real export on a box with only ~200MB free RAM at the time.
 - nginx (`/etc/nginx/sites-available/excel-pdf`) reverse-proxies + terminates TLS (certbot/Let's Encrypt, auto-renew)
 - Deploy = `git pull` in this folder + `systemctl restart excel-pdf` (see below)
 
