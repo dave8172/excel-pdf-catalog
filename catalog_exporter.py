@@ -632,7 +632,21 @@ def get_last_page_slots(page_size: tuple[int, int]) -> list[tuple[int, int, int,
     return build_slots(REFERENCE_LAST_ROWS, page_size)
 
 
-def get_template_slots(template_variant: TemplateVariant, role: str, page_size: tuple[int, int]) -> list[tuple[int, int, int, int]]:
+def get_template_slots(
+    template_variant: TemplateVariant,
+    role: str,
+    page_size: tuple[int, int],
+    rows: list[tuple[int, int]] | None = None,
+) -> list[tuple[int, int, int, int]]:
+    """Where products go on a page.
+
+    Normally the row set is chosen by the page's role, because a multi-page
+    template gives each role its own page design. `rows` overrides that with a
+    row set measured off the page itself -- see `detect_grid_rows`, which is how
+    a single-page template gets the same layout on every page it produces.
+    """
+    if rows is not None:
+        return build_slots(list(rows), page_size)
     if template_variant == "p6":
         if role == "first":
             return build_slots(P6_FIRST_PAGE_ROWS, page_size)
@@ -917,6 +931,72 @@ def layout_score(page: Image.Image, slots: list[tuple[int, int, int, int]]) -> f
     return strong_hits / len(scores)
 
 
+def slot_interior_clear_ratio(page: Image.Image, slot: tuple[int, int, int, int]) -> float:
+    """How much of the middle of a slot is blank.
+
+    An empty product box is inked at its edges and white inside. A solid banner
+    is inked throughout, and scores just as well as a box on `slot_border_score`
+    because that only asks whether there is ink near the edges. This is what
+    tells the two apart.
+    """
+    left, top, right, bottom = slot
+    inset_x = max(1, (right - left) // 4)
+    inset_y = max(1, (bottom - top) // 4)
+    step_x = max(1, (right - left) // 12)
+    step_y = max(1, (bottom - top) // 12)
+
+    total = 0
+    clear = 0
+    for x in range(left + inset_x, max(left + inset_x + 1, right - inset_x), step_x):
+        for y in range(top + inset_y, max(top + inset_y + 1, bottom - inset_y), step_y):
+            px = min(max(0, x), page.size[0] - 1)
+            py = min(max(0, y), page.size[1] - 1)
+            r, g, b = page.getpixel((px, py))[:3]
+            total += 1
+            if min(r, g, b) >= 235 and max(r, g, b) - min(r, g, b) <= 20:
+                clear += 1
+    return clear / total if total else 0.0
+
+
+def single_page_grid_rows(
+    page_numbers: tuple[int, int, int],
+    page: Image.Image,
+) -> list[tuple[int, int]] | None:
+    """The measured row set to use for every page, or None to keep role-based rows.
+
+    Only a one-page template gets measured. A multi-page template gives each
+    role its own page design and its own fixed row set, and those are what real
+    client templates are built against -- re-deriving them from pixels would put
+    working catalogs at the mercy of a detector.
+
+    Returns None if nothing is found, so a template that the lower-resolution
+    check at resolve time accepted can still fall back rather than produce a
+    page with no slots on it.
+    """
+    if len(set(page_numbers)) != 1:
+        return None
+    return detect_grid_rows(page) or None
+
+
+def detect_grid_rows(page: Image.Image) -> list[tuple[int, int]]:
+    """Which reference grid rows this page actually has empty product boxes in.
+
+    Every row set in this module is a subset of `REFERENCE_PAGE2_ROWS`, so those
+    five are the only candidates. A row counts when its three boxes are drawn
+    *and* still empty -- the second half matters because a full-width banner or
+    a dark footer band sitting in a row's band would otherwise read as boxes,
+    and products would be laid over it.
+    """
+    present: list[tuple[int, int]] = []
+    for top, bottom in REFERENCE_PAGE2_ROWS:
+        slots = [scale_box((left, top, right, bottom), page.size) for left, right in REFERENCE_COLUMNS]
+        bordered = sum(1 for slot in slots if slot_border_score(page, slot) >= 0.55)
+        empty = sum(1 for slot in slots if slot_interior_clear_ratio(page, slot) >= 0.6)
+        if bordered >= 2 and empty >= 2:
+            present.append((top, bottom))
+    return present
+
+
 def classify_page_layout(page: Image.Image) -> PageClassification:
     first_score = layout_score(page, get_first_page_slots(page.size))
     top_row_slots = get_middle_page_slots(page.size)[:3]
@@ -939,13 +1019,20 @@ def resolve_template_page_numbers(
         status_callback(f"Reading template structure ({page_count} page{'s' if page_count != 1 else ''})...")
 
     if page_count == 1:
+        # A one-page template is judged on what it has, not on matching one of
+        # the fixed cover/middle shapes: whatever rows of boxes are on it get
+        # used on every page of the export. That makes designs the role-based
+        # classifier calls invalid -- three rows, say -- perfectly usable.
         page = render_pdf_page(template_pdf, 1, dpi=TEMPLATE_ANALYSIS_RENDER_DPI)
         try:
-            classification = classify_page_layout(page)
+            rows = detect_grid_rows(page)
         finally:
             page.close()
-        if classification.kind == "invalid":
-            raise ValueError("Invalid PDF template. The PDF must contain the supported 3-column product box grid.")
+        if not rows:
+            raise ValueError(
+                "Invalid PDF template. The PDF must contain at least one row of three "
+                "empty product boxes drawn side by side."
+            )
         return 1, 1, 1
 
     if page_count == 2:
@@ -2032,16 +2119,19 @@ def export_catalog_high_quality(
     completed_units += 1
     update_progress(round((completed_units / total_units) * 100))
 
+    grid_rows = single_page_grid_rows((first_index, middle_index, last_index), first_raw)
     first_page_size = scale_page_size(first_raw.size, HIGH_QUALITY_OVERLAY_SCALE)
     middle_page_size = scale_page_size(middle_raw.size, HIGH_QUALITY_OVERLAY_SCALE)
     last_page_size = scale_page_size(last_raw.size, HIGH_QUALITY_OVERLAY_SCALE)
-    first_slots = get_template_slots(template_variant, "first", first_page_size)
-    middle_slots = get_template_slots(template_variant, "middle", middle_page_size)
-    last_slots = get_template_slots(template_variant, "last", last_page_size)
+    first_slots = get_template_slots(template_variant, "first", first_page_size, rows=grid_rows)
+    middle_slots = get_template_slots(template_variant, "middle", middle_page_size, rows=grid_rows)
+    last_slots = get_template_slots(template_variant, "last", last_page_size, rows=grid_rows)
     footer_top_reference = detect_footer_top_reference(last_raw)
     footer_safe_border_style = detect_grid_border_style(
-        last_raw, get_template_slots(template_variant, "last", last_raw.size)
-    ) or detect_grid_border_style(middle_raw, get_template_slots(template_variant, "middle", middle_raw.size))
+        last_raw, get_template_slots(template_variant, "last", last_raw.size, rows=grid_rows)
+    ) or detect_grid_border_style(
+        middle_raw, get_template_slots(template_variant, "middle", middle_raw.size, rows=grid_rows)
+    )
     if footer_safe_border_style is not None:
         border_color, border_thickness = footer_safe_border_style
         footer_safe_border_style = (border_color, max(2, round(border_thickness * HIGH_QUALITY_OVERLAY_SCALE)))
@@ -2096,7 +2186,10 @@ def export_catalog_high_quality(
     remaining_products = products[cursor:]
     if remaining_products:
         final_layout: Literal["footer_safe", "last"] = "last"
-        if template_variant == "p6":
+        if template_variant == "p6" or grid_rows is not None:
+            # Single-page templates take this branch for the same reason p6
+            # does: there is only one page design, so the final page keeps the
+            # rows every other page uses.
             middle_chunks, last_products = split_remaining_products_for_reserved_last_page(
                 remaining_products,
                 len(middle_slots),
@@ -2177,24 +2270,31 @@ def export_catalog_normal(
     total_units = max(1, len(products) + 3)
     completed_units = 1
     update_progress(round((completed_units / total_units) * 100))
+    page_numbers = template_page_numbers or resolve_template_page_numbers(
+        template_pdf,
+        status_callback=status_callback,
+    )
     first_raw, middle_raw, last_raw = load_template_themes(
         template_pdf,
         status_callback=status_callback,
-        page_numbers=template_page_numbers,
+        page_numbers=page_numbers,
     )
     completed_units += 1
     update_progress(round((completed_units / total_units) * 100))
 
-    first_slots = get_template_slots(template_variant, "first", first_raw.size)
-    middle_slots = get_template_slots(template_variant, "middle", middle_raw.size)
-    last_slots = get_template_slots(template_variant, "last", last_raw.size)
+    grid_rows = single_page_grid_rows(page_numbers, first_raw)
+    first_slots = get_template_slots(template_variant, "first", first_raw.size, rows=grid_rows)
+    middle_slots = get_template_slots(template_variant, "middle", middle_raw.size, rows=grid_rows)
+    last_slots = get_template_slots(template_variant, "last", last_raw.size, rows=grid_rows)
     footer_top_reference = detect_footer_top_reference(last_raw)
 
     first_theme = sanitize_template_page(first_raw, first_slots)
     middle_theme = sanitize_template_page(middle_raw, middle_slots)
     remaining_products = products[len(first_slots) :]
     final_layout: Literal["footer_safe", "last"] = "last"
-    if template_variant == "p6":
+    if template_variant == "p6" or grid_rows is not None:
+        # Nothing to reflow: every page of a single-page export is the same
+        # design, so the final page uses the same rows as the rest.
         final_slots = last_slots
     else:
         _, _, final_layout = split_remaining_products_for_last_page(

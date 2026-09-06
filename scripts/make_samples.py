@@ -38,6 +38,7 @@ from catalog_exporter import (  # noqa: E402  (path setup has to come first)
     REFERENCE_PAGE2_ROWS,
     REFERENCE_PAGE_SIZE,
     classify_page_layout,
+    detect_grid_rows,
     render_pdf_page,
     try_font,
 )
@@ -289,6 +290,32 @@ def write_template_pdf(path: Path) -> None:
     page.save()
 
 
+def write_single_page_template_pdf(path: Path) -> None:
+    """The simplest template there is: one page, repeated for the whole catalog.
+
+    A one-page template is not matched against the cover/middle shapes at all —
+    the exporter measures which rows of boxes are actually on it and uses that
+    same row set for every page. So this one is drawn dense: a slim brand bar
+    that can survive being repeated, and the full five rows beneath it.
+    """
+    sy = PAGE_H / REFERENCE_PAGE_SIZE[1]
+    page = pdf_canvas.Canvas(str(path), pagesize=A4)
+    page.setTitle("Catalog template - one page (sample)")
+
+    # Anything here has to look right on *every* page, so it is a bar rather
+    # than a cover treatment, and it stays clear of the first row at y=200.
+    page.setFillColor(HexColor(ACCENT))
+    page.rect(0, PAGE_H - (150 * sy), PAGE_W, 150 * sy, stroke=0, fill=1)
+    page.setFillColor(HexColor("#FFFFFF"))
+    page.setFont("Helvetica-Bold", 13)
+    page.drawString(34, PAGE_H - (105 * sy), "YOUR BRAND HERE")
+
+    draw_grid(page, REFERENCE_PAGE2_ROWS)
+    draw_footer(page, "Sample one-page template - repeated for every page")
+    page.showPage()
+    page.save()
+
+
 def write_promotion_template_pdf(path: Path) -> None:
     """A second template, shaped for the promotion card style.
 
@@ -341,6 +368,22 @@ def write_promotion_template_pdf(path: Path) -> None:
     page.showPage()
 
     page.save()
+
+
+def verify_single_page_template(path: Path, expected_rows: int) -> None:
+    """A one-page template is judged by the rows the exporter measures on it."""
+    page = render_pdf_page(path, 1, dpi=72)
+    try:
+        rows = detect_grid_rows(page)
+    finally:
+        page.close()
+    status = "ok" if len(rows) == expected_rows else "MISMATCH"
+    print(f"  one-page: {len(rows)} rows detected (want {expected_rows}) tops={[r[0] for r in rows]}  [{status}]")
+    if len(rows) != expected_rows:
+        raise SystemExit(
+            f"One-page sample template detects {len(rows)} rows, not {expected_rows}. "
+            "Check the brand bar is not overlapping the first row."
+        )
 
 
 def verify_template(path: Path, expected: dict[int, str] | None = None) -> None:
@@ -429,6 +472,8 @@ def main() -> None:
     write_csv(SAMPLES / "catalog-products-template.csv")
 
     print("template pdfs...")
+    write_single_page_template_pdf(SAMPLES / "catalog-template-onepage.pdf")
+    verify_single_page_template(SAMPLES / "catalog-template-onepage.pdf", expected_rows=5)
     write_template_pdf(SAMPLES / "catalog-template.pdf")
     verify_template(SAMPLES / "catalog-template.pdf")
     write_promotion_template_pdf(SAMPLES / "catalog-template-promotion.pdf")
@@ -438,10 +483,12 @@ def main() -> None:
     )
 
     print("previews...")
+    write_pdf_previews(SAMPLES / "catalog-template-onepage.pdf", "onepage-template-preview", 1)
     write_pdf_previews(SAMPLES / "catalog-template.pdf", "template-preview", 2)
     write_pdf_previews(SAMPLES / "catalog-template-promotion.pdf", "promo-template-preview", 3)
 
     print("end-to-end sample exports...")
+    write_output_preview("catalog-template-onepage.pdf", "por-title", "example-onepage")
     write_output_preview("catalog-template.pdf", "por-title", "example-output")
     write_output_preview("catalog-template-promotion.pdf", "promotion", "example-promo")
 

@@ -53,6 +53,20 @@ Two things that took a round to get right, both encoded in the script's comments
 - **Border weight.** The detector samples for ink ~2px inside each box edge on a 72dpi render. A hairline centred on the outline half-misses it. The strokes are drawn fully *inside* the outline at 3.2pt, so the box keeps its exact outer size and the ink lands where the detector looks.
 - **The promotion template is three pages, and the plain one is two.** `P6_FIRST/MIDDLE/LAST_PAGE_ROWS` are three *different* row sets; a 2-page promotion template makes the exporter draw last-page products into rows the cover page has no boxes in. Its page 2 also carries a banner in the top-row band rather than boxes — a middle page is *recognised* by ink there, but the promotion layout never fills it.
 
+## Single-page templates (2026-09-06)
+
+A one-page template was already *accepted* — and produced a broken second page. `resolve_template_page_numbers` returns `(1, 1, 1)`, so the same page then got the fixed row set for each role in turn, and those row sets differ: a cover-shaped page used as the last page had products drawn at row 200, where it has a header rather than boxes. Three products floated over the branding and the bottom row came out empty.
+
+**The fix is to stop assuming and measure.** `detect_grid_rows(page)` returns which of `REFERENCE_PAGE2_ROWS` — the superset every other row set is drawn from — actually have empty boxes on the page. `single_page_grid_rows()` applies it **only when the three page indices are identical**, and `get_template_slots(..., rows=…)` takes the override. Multi-page templates are deliberately untouched: real client templates are built against the fixed role sets, and re-deriving those from pixels would put working catalogs at the mercy of a detector.
+
+A row counts only when its boxes are drawn **and still empty inside** (`slot_interior_clear_ratio`). Border sampling alone cannot tell a box from a solid banner, and both the promotion template's section banner and its dark back-page band sit exactly in a row's band — without the interior check, products would be laid over them.
+
+Consequences worth knowing:
+- Any number of rows works, in any position — a 3-row page was rejected before as `invalid` and is fine now.
+- Single-page templates bypass the p6/plain row distinction entirely, so both card styles fit one.
+- The footer-safe reflow is skipped (as it is for p6): every page of a single-page export has the same design, so the last page keeps the same rows.
+- `single_page_grid_rows` returns `None` if it finds nothing, falling back to the role sets rather than producing a page with no slots — resolve-time detection runs at 72dpi and export-time at 150, and they should never disagree, but a fallback costs one line.
+
 ## Hardening for public use (2026-09-06)
 
 The engine's two most dangerous behaviours were harmless while its author wrote the input files:

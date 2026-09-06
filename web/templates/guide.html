@@ -163,10 +163,27 @@
   <p>The template is <strong>your page design with the product boxes left empty</strong> — your header, your colours, your footer, and a grid of blank boxes. The tool renders the page, finds those boxes, and draws one product inside each of them. It never invents a layout: whatever you draw is what you get back.</p>
 
   <div class="note">
-    <strong>There are two blank templates, and they are not interchangeable.</strong> The promotion card is taller than the plain one, so it fits one row fewer per page — a promotion catalog built on the plain template comes out with an empty row on every page. Pick the one that matches the card style you want.
+    <strong>Three blank templates to start from.</strong> The one-page one is the simplest and the most forgiving. The other two are multi-page, and they are not interchangeable with each other — the promotion card is taller, so it fits one row fewer per page, and a promotion catalog built on the plain template comes out with an empty row on every page.
   </div>
 
-  <h3>A. Plain template — for the <code>por-title</code> style</h3>
+  <h3>One-page template — the simplest option</h3>
+  <p>If you just want a grid of products with your branding on it, one page is enough. <strong>The tool measures the rows of boxes that are actually on your page and repeats that exact layout for the whole catalog</strong> — no cover page, no back page, no rules about which row goes where. Draw one, five, or any number of rows; it uses what it finds.</p>
+  <div class="shots">
+    <figure>
+      <img src="{{ prefix }}/static/samples/onepage-template-preview-page1.png" alt="The one-page template: a slim red brand bar across the top, then five rows of three empty boxes filling the page.">
+      <figcaption><strong>One page, 5 rows of 3.</strong> Whatever is on it appears on every page of the finished catalog, so keep the header to something that bears repeating.</figcaption>
+    </figure>
+    <figure>
+      <img src="{{ prefix }}/static/samples/example-onepage-page1.png" alt="The finished one-page catalog: the brand bar, then fourteen product cards laid into the grid.">
+      <figcaption>The 14 sample products through it — they fit in one page of 15.</figcaption>
+    </figure>
+  </div>
+  <div class="downloads">
+    <a class="btn ghost" href="{{ prefix }}/static/samples/catalog-template-onepage.pdf" download>Download the one-page template</a>
+  </div>
+
+  <h3>Plain template — 2 pages, for the <code>por-title</code> style</h3>
+  <p>Use this instead when you want the first page to look different from the rest — a cover with room for a title, then a denser page that repeats.</p>
   <div class="shots">
     <figure>
       <img src="{{ prefix }}/static/samples/template-preview-page1.png" alt="Page 1 of the plain template: a red header band across the top, then four rows of three empty boxes.">
@@ -181,7 +198,7 @@
     <a class="btn ghost" href="{{ prefix }}/static/samples/catalog-template.pdf" download>Download the plain template (2 pages)</a>
   </div>
 
-  <h3>B. Promotion template — for the <code>promotion</code> style</h3>
+  <h3>Promotion template — 3 pages, for the <code>promotion</code> style</h3>
   <div class="shots">
     <figure>
       <img src="{{ prefix }}/static/samples/promo-template-preview-page1.png" alt="Page 1 of the promotion template: header band, a clear area, then three rows of three empty boxes.">
@@ -201,13 +218,14 @@
   </div>
   <p class="muted">The banner on page 2 is doing a job, not just decorating: the tool identifies a repeating middle page by finding something in that top strip, and the promotion layout never puts a product there.</p>
 
-  <p>Both are A4. Open one in Illustrator, Canva, InDesign or Word, put your own artwork around the boxes, and export it back to PDF.</p>
+  <p>All three are A4. Open one in Illustrator, Canva, InDesign or Word, put your own artwork around the boxes, and export it back to PDF.</p>
 
   <h3>The rules the grid has to follow</h3>
   <ul class="rules">
     <li><strong>Three boxes across.</strong> The layout is a 3-column grid — that is the one thing that is not adjustable.</li>
     <li><strong>The boxes must actually be drawn</strong>, as visible outlines. The tool finds them by looking for their edges; a box implied by white space is invisible to it. Keep the outlines at roughly the weight in the sample — a hairline can fall below what a page render picks up.</li>
-    <li><strong>Do not move the boxes</strong> if you start from the sample. Redecorate everything around them freely; change where they sit and the tool stops recognising the page as a template.</li>
+    <li><strong>Do not move the boxes</strong> if you start from a sample. Redecorate everything around them freely; change where they sit and the tool stops recognising the page as a template. On a <em>one-page</em> template you can delete whole rows you do not want — it measures what is left — but the rows that remain still have to be where they were.</li>
+    <li><strong>A solid band is not a row of boxes.</strong> The tool checks that a box is drawn <em>and still empty</em> inside, so a full-width banner or a dark footer strip will not be mistaken for somewhere to put products.</li>
     <li><strong>Any page size</strong> works — the grid is measured in proportions, not millimetres. The sample is A4 because that is what most people will open.</li>
     <li>At most <strong>{{ max_template_pages }} pages</strong>. This is the page design to repeat, not the finished catalog.</li>
   </ul>
@@ -217,9 +235,9 @@
     <table>
       <thead><tr><th>Template</th><th>What the tool does with it</th></tr></thead>
       <tbody>
-        <tr><td><strong>1 page</strong></td><td>That one design is used for every page of the catalog.</td></tr>
-        <tr><td><strong>2 pages</strong> <span class="muted">(template A)</span></td><td>One page must be cover style and the other middle style, in either order. The cover is used first and last; the middle page repeats in between.</td></tr>
-        <tr><td><strong>3 or more</strong> <span class="muted">(template B)</span></td><td>Page 1 is the cover, page 2 is the repeating middle page, and the final page is the back page. Pages between those are ignored.</td></tr>
+        <tr><td><strong>1 page</strong> <span class="muted">(one-page template)</span></td><td>The tool measures the rows of boxes on the page and repeats that exact layout for every page of the catalog. No rules about which rows — any number, anywhere the grid allows.</td></tr>
+        <tr><td><strong>2 pages</strong> <span class="muted">(plain template)</span></td><td>One page must be cover style and the other middle style, in either order. The cover is used first and last; the middle page repeats in between.</td></tr>
+        <tr><td><strong>3 or more</strong> <span class="muted">(promotion template)</span></td><td>Page 1 is the cover, page 2 is the repeating middle page, and the final page is the back page. Pages between those are ignored.</td></tr>
       </tbody>
     </table>
   </div>
@@ -233,14 +251,14 @@
       <thead><tr><th>Setting</th><th>What each card shows</th></tr></thead>
       <tbody>
         <tr><td><code>auto</code></td><td>Picks for you: <em>promotion</em> if the file has a Price or Sale Price column, <em>por-title</em> if it does not. Leave it here unless the result is not what you wanted.</td></tr>
-        <tr><td><code>por-title</code></td><td>Photo, title, POR badge, NEW flash. The plain catalog card — use <strong>template A</strong>.</td></tr>
-        <tr><td><code>promotion</code></td><td>Adds the case price, the shelf price and the pack size in a panel beside the photo — use <strong>template B</strong>.</td></tr>
+        <tr><td><code>por-title</code></td><td>Photo, title, POR badge, NEW flash. The plain catalog card — use the <strong>one-page</strong> or <strong>plain</strong> template.</td></tr>
+        <tr><td><code>promotion</code></td><td>Adds the case price, the shelf price and the pack size in a panel beside the photo — use the <strong>promotion</strong> template.</td></tr>
       </tbody>
     </table>
   </div>
 
   <div class="note">
-    <strong>Downloaded template A but your sheet has prices in it?</strong> <code>auto</code> will switch to the promotion card and the pages will not line up. Either set the style to <code>por-title</code> by hand, or take template B instead.
+    <strong>Using the plain template but your sheet has prices in it?</strong> <code>auto</code> will switch to the promotion card and the pages will not line up. Either set the style to <code>por-title</code> by hand, or take the promotion template instead. A <em>one-page</em> template does not have this problem — its layout is measured from the page, so both card styles fit it.
   </div>
 
   <p class="muted">The promotion card gives roughly half its width to the price panel, so keep titles to two or three short words — a long single word cannot be wrapped and will be cut off.</p>
@@ -288,7 +306,11 @@
         </tr>
         <tr>
           <td>The PDF must contain the supported 3-column product box grid</td>
-          <td>The template has no boxes the tool can find. Either they are not drawn as outlines, they have been moved, or there are not three across. Start from the blank template above.</td>
+          <td>A multi-page template with no boxes the tool can find. Either they are not drawn as outlines, they have been moved, or there are not three across. Start from a blank template above.</td>
+        </tr>
+        <tr>
+          <td>Must contain at least one row of three empty product boxes</td>
+          <td>Same thing on a one-page template. Check the boxes are drawn as visible outlines, that there are three across, and that nothing is filling them in.</td>
         </tr>
         <tr>
           <td>Page 2 must be a middle-style 3-column grid page</td>
@@ -300,7 +322,7 @@
         </tr>
         <tr>
           <td>Every page has an empty row of boxes</td>
-          <td>Plain template, promotion cards. Either switch the card style to <code>por-title</code> or use the promotion template.</td>
+          <td>Plain template, promotion cards. Either switch the card style to <code>por-title</code>, use the promotion template, or move to a one-page template, which measures its own layout.</td>
         </tr>
         <tr>
           <td>Photos are missing from the finished PDF</td>
