@@ -958,6 +958,22 @@ def slot_interior_clear_ratio(page: Image.Image, slot: tuple[int, int, int, int]
     return clear / total if total else 0.0
 
 
+def final_page_role(page_numbers: tuple[int, int, int]) -> str:
+    """Which page design the catalog's final page is actually printed on.
+
+    A three-page template gives the final page its own design, and the "last"
+    row set -- a grid that stops short of a back-page footer -- is drawn to
+    match it. A **two-page** template has no such page: `resolve_template_page_numbers`
+    hands back the cover for the last slot as well. Asking for "last" rows there
+    puts products at the top row of a page whose top is a header, so they land
+    on the branding with no boxes around them.
+
+    The role therefore follows the page, not the position in the catalog.
+    """
+    first_index, _middle_index, last_index = page_numbers
+    return "first" if last_index == first_index else "last"
+
+
 def single_page_grid_rows(
     page_numbers: tuple[int, int, int],
     page: Image.Image,
@@ -2119,16 +2135,18 @@ def export_catalog_high_quality(
     completed_units += 1
     update_progress(round((completed_units / total_units) * 100))
 
-    grid_rows = single_page_grid_rows((first_index, middle_index, last_index), first_raw)
+    page_numbers = (first_index, middle_index, last_index)
+    grid_rows = single_page_grid_rows(page_numbers, first_raw)
+    last_role = final_page_role(page_numbers)
     first_page_size = scale_page_size(first_raw.size, HIGH_QUALITY_OVERLAY_SCALE)
     middle_page_size = scale_page_size(middle_raw.size, HIGH_QUALITY_OVERLAY_SCALE)
     last_page_size = scale_page_size(last_raw.size, HIGH_QUALITY_OVERLAY_SCALE)
     first_slots = get_template_slots(template_variant, "first", first_page_size, rows=grid_rows)
     middle_slots = get_template_slots(template_variant, "middle", middle_page_size, rows=grid_rows)
-    last_slots = get_template_slots(template_variant, "last", last_page_size, rows=grid_rows)
+    last_slots = get_template_slots(template_variant, last_role, last_page_size, rows=grid_rows)
     footer_top_reference = detect_footer_top_reference(last_raw)
     footer_safe_border_style = detect_grid_border_style(
-        last_raw, get_template_slots(template_variant, "last", last_raw.size, rows=grid_rows)
+        last_raw, get_template_slots(template_variant, last_role, last_raw.size, rows=grid_rows)
     ) or detect_grid_border_style(
         middle_raw, get_template_slots(template_variant, "middle", middle_raw.size, rows=grid_rows)
     )
@@ -2283,9 +2301,10 @@ def export_catalog_normal(
     update_progress(round((completed_units / total_units) * 100))
 
     grid_rows = single_page_grid_rows(page_numbers, first_raw)
+    last_role = final_page_role(page_numbers)
     first_slots = get_template_slots(template_variant, "first", first_raw.size, rows=grid_rows)
     middle_slots = get_template_slots(template_variant, "middle", middle_raw.size, rows=grid_rows)
-    last_slots = get_template_slots(template_variant, "last", last_raw.size, rows=grid_rows)
+    last_slots = get_template_slots(template_variant, last_role, last_raw.size, rows=grid_rows)
     footer_top_reference = detect_footer_top_reference(last_raw)
 
     first_theme = sanitize_template_page(first_raw, first_slots)

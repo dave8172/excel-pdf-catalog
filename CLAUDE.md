@@ -61,6 +61,8 @@ A one-page template was already *accepted* — and produced a broken second page
 
 A row counts only when its boxes are drawn **and still empty inside** (`slot_interior_clear_ratio`). Border sampling alone cannot tell a box from a solid banner, and both the promotion template's section banner and its dark back-page band sit exactly in a row's band — without the interior check, products would be laid over them.
 
+**The same mismatch was live one layer up, in the 2-page path** (fixed straight after, once it showed up in the guide's own sample output). `resolve_template_page_numbers` returns `(first, middle, first)` for a 2-page template — the cover is the final page too — but the final page was still given `REFERENCE_LAST_ROWS`, whose first row is 200. On a cover page that band is the header, so the leftover products printed on top of the branding with no boxes around them, and the twelve real boxes stayed empty. `final_page_role()` now picks the role from the page rather than from the position in the catalog: when `last_index == first_index` the final page uses the cover's rows. Slot counts are unchanged (both row sets are 4×3), so the page-splitting decisions are identical — only the positions move. The footer-safe path is untouched and still correct on a cover page, because it whitens the band and redraws the grid itself.
+
 Consequences worth knowing:
 - Any number of rows works, in any position — a 3-row page was rejected before as `invalid` and is fine now.
 - Single-page templates bypass the p6/plain row distinction entirely, so both card styles fit one.
