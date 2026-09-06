@@ -76,6 +76,8 @@ systemctl restart excel-pdf
 journalctl -u excel-pdf -n 50 --no-pager
 ```
 
+**A change to anything under `web/templates/` needs the restart too** — Jinja caches compiled templates outside debug mode, so an edited page keeps serving the old copy with no error to notice.
+
 Service: `excel-pdf.service` — gunicorn, **1 process, 4 gthread threads**, bound to `127.0.0.1:8020`. One process is what bounds memory; the threads exist so a visitor loading the page is not stuck behind someone else's export. `MemoryHigh=550M`, `OOMScoreAdjust=300`, `--max-requests 200` to stop Pillow/reportlab RSS creeping. See `/root/projects/memory/resource-constraints.md`.
 
 nginx: `/etc/nginx/sites-available/topdf` (+ rate-limit zones in `conf.d/topdf-limits.conf`). **Its `listen` is pinned to `65.20.79.200:443`, not `0.0.0.0`** — tailscaled already holds `:443` on its own interface, so a wildcard bind fails with EADDRINUSE and nginx silently keeps running the old config. Certbot writes `listen 443 ssl` on reconfiguration; if TLS breaks after a renewal, check that line first.
