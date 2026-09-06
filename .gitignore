@@ -11,3 +11,6 @@ templates/*.png
 !templates/por img.png
 !templates/new img.png
 !templates/por img p6.png
+
+# Hosted app runtime state: quota database and the usage log.
+logs/

@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Catalog PDF Exporter{% endblock %}
+
+{% block head %}
+<style>
+  form { display: flex; flex-direction: column; gap: 14px; margin-top: 22px; }
+  label { font-weight: 600; font-size: 0.94rem; display: block; margin-bottom: 6px; }
+  .field { background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 14px; }
+  .field .hint { color: var(--muted); font-size: 0.82rem; margin: 6px 0 0; }
+  input[type=file], select {
+    width: 100%; padding: 11px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text); font-size: 0.94rem; font-family: inherit;
+  }
+  .row { display: flex; gap: 14px; }
+  .row > .field { flex: 1; min-width: 0; }
+  #status { margin-top: 4px; font-size: 0.9rem; color: var(--muted); display: none; }
+  #status.done { color: var(--good); }
+  #status.failed { color: var(--bad); }
+  .bar { height: 3px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 10px; display: none; }
+  .bar i { display: block; height: 100%; width: 34%; background: var(--accent); animation: slide 1.5s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -34%; } 100% { margin-left: 100%; } }
+  .startline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: -4px; }
+</style>
+{% endblock %}
+
+{% block body %}
+  <header class="top">
+    <h1>Catalog PDF Exporter</h1>
+    <a class="nav" href="{{ prefix }}/guide">What can I upload? →</a>
+  </header>
+  <p class="sub">A product list plus your template page, back as a finished catalog PDF.</p>
+
+  <form id="genForm" novalidate>
+    <div class="field">
+      <label for="excel">Product file</label>
+      <input type="file" id="excel" name="excel" accept=".xlsx,.csv" required>
+      <p class="hint">.xlsx or .csv — one product per row. Needs <code>Image Src</code>, <code>Title</code> and <code>POR</code> columns.</p>
+    </div>
+
+    <div class="field">
+      <label for="template">Template PDF</label>
+      <input type="file" id="template" name="template" accept=".pdf" required>
+      <p class="hint">Your page design, with the empty product boxes drawn on it.</p>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="template_form">Card style</label>
+        <select id="template_form" name="template_form">
+          {% for choice in template_forms %}
+          <option value="{{ choice }}" {% if choice == 'auto' %}selected{% endif %}>{{ choice }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="quality">Quality</label>
+        <select id="quality" name="quality">
+          <option value="normal" selected>normal</option>
+          <option value="high">high</option>
+        </select>
+      </div>
+    </div>
+
+    <button type="submit" class="btn" id="submitBtn">Generate PDF</button>
+    <div class="startline">
+      <button type="button" class="btn ghost" id="sampleBtn">Try it with the sample files</button>
+      <span class="muted">no files of your own needed</span>
+    </div>
+    <div class="bar" id="bar"><i></i></div>
+    <div id="status"></div>
+  </form>
+{% endblock %}
+
+{% block foot %}
+  <p>Up to {{ max_mb }} MB per upload. New to this? The <a href="{{ prefix }}/guide">guide</a> has downloadable templates.</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // The export is posted straight to this app's own origin rather than through
+  // the stuffs.bid rewrite in front of it. A finished catalog can be tens of
+  // megabytes and take over a minute, and a CDN proxy hop is the wrong place
+  // for either. Same-origin visits post to themselves.
+  const ORIGIN = {{ origin | tojson }};
+  const ENDPOINT = ORIGIN + '{{ prefix }}/generate';
+  const SAMPLES = '{{ prefix }}/static/samples';
+
+  const form = document.getElementById('genForm');
+  const btn = document.getElementById('submitBtn');
+  const sampleBtn = document.getElementById('sampleBtn');
+  const status = document.getElementById('status');
+  const bar = document.getElementById('bar');
+  let ticker = null;
+
+  function begin(message) {
+    clearInterval(ticker);  // the sample flow calls begin twice: fetch, then export
+    btn.disabled = true;
+    sampleBtn.disabled = true;
+    btn.textContent = 'Generating…';
+    status.className = '';
+    status.style.display = 'block';
+    bar.style.display = 'block';
+    const startedAt = Date.now();
+    // A minute of silence reads as a hang, so the wait is always counted out.
+    const tick = () => {
+      const seconds = Math.round((Date.now() - startedAt) / 1000);
+      status.textContent = message + ' ' + seconds + 's — keep this tab open.';
+    };
+    tick();
+    ticker = setInterval(tick, 1000);
+  }
+
+  function end(text, kind) {
+    clearInterval(ticker);
+    bar.style.display = 'none';
+    btn.disabled = false;
+    sampleBtn.disabled = false;
+    btn.textContent = 'Generate PDF';
+    status.textContent = text;
+    status.className = kind || '';
+  }
+
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function send(data, waitMessage) {
+    begin(waitMessage);
+    try {
+      const response = await fetch(ENDPOINT, { method: 'POST', body: data });
+
+      if (!response.ok) {
+        let message = 'Export failed (HTTP ' + response.status + ').';
+        try {
+          const body = await response.json();
+          if (body && body.error) message = body.error;
+        } catch (parseError) { /* non-JSON error page; keep the status line */ }
+        end(message, 'failed');
+        return;
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/);
+      saveBlob(blob, match ? decodeURIComponent(match[1]) : 'catalog.pdf');
+      end('Done — PDF downloaded.', 'done');
+    } catch (networkError) {
+      end('Export failed: the connection dropped. Please try again.', 'failed');
+    }
+  }
+
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    const excel = document.getElementById('excel');
+    const template = document.getElementById('template');
+    if (!excel.files.length || !template.files.length) {
+      end('Please choose both a product file and a template PDF.', 'failed');
+      return;
+    }
+    send(new FormData(form), 'Generating…');
+  });
+
+  sampleBtn.addEventListener('click', async function () {
+    begin('Fetching the sample files…');
+    try {
+      const [products, template] = await Promise.all([
+        fetch(SAMPLES + '/catalog-products-template.xlsx').then(r => r.blob()),
+        fetch(SAMPLES + '/catalog-template.pdf').then(r => r.blob()),
+      ]);
+      const data = new FormData();
+      data.append('excel', products, 'sample catalog.xlsx');
+      data.append('template', template, 'sample template.pdf');
+      data.append('template_form', 'por-title');
+      data.append('quality', 'normal');
+      await send(data, 'Generating the sample…');
+    } catch (error) {
+      end('Could not load the sample files. Please try again.', 'failed');
+    }
+  });
+</script>
+{% endblock %}

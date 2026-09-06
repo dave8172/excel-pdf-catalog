@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+{% block title %}What to upload — Catalog PDF Exporter{% endblock %}
+{% block wrapclass %}wide{% endblock %}
+
+{% block head %}
+<style>
+  .flow {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 14px 16px; margin-top: 18px; font-size: 0.9rem;
+  }
+  .flow b { display: block; font-size: 0.95rem; }
+  .flow .step { flex: 1; min-width: 150px; }
+  .flow .arrow { color: var(--muted); font-size: 1.2rem; }
+
+  .downloads { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 4px; }
+  .downloads a { font-size: 0.9rem; padding: 11px 14px; }
+
+  /* A spreadsheet drawn as a table reads better on a phone than a screenshot
+     of one, and stays legible when the text is scaled up. */
+  table.sheet { font-size: 0.8rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.sheet th, table.sheet td { padding: 5px 9px; white-space: nowrap; }
+  table.sheet thead th { background: #22262f; color: var(--muted); text-align: center; font-weight: 600; }
+  table.sheet tbody tr:first-child td { background: #22262f; font-weight: 700; color: #fff; }
+  table.sheet td.rownum { background: #22262f; color: var(--muted); text-align: center; }
+  table.sheet td.req { color: #ffd8a8; }
+
+  .shots { display: flex; gap: 14px; flex-wrap: wrap; margin: 16px 0; }
+  .shots figure { margin: 0; flex: 1; min-width: 190px; max-width: 300px; }
+  .shots img {
+    display: block; width: 100%; height: auto; border-radius: 8px;
+    border: 1px solid var(--line); background: #fff;
+  }
+  .shots figcaption { color: var(--muted); font-size: 0.82rem; margin-top: 7px; }
+
+  ul.rules { padding-left: 20px; margin: 12px 0; }
+  ul.rules li { margin: 7px 0; font-size: 0.92rem; }
+
+  .toc { display: flex; gap: 8px 16px; flex-wrap: wrap; margin: 16px 0 0; font-size: 0.9rem; }
+</style>
+{% endblock %}
+
+{% block body %}
+  <header class="top">
+    <h1>What to upload</h1>
+    <a class="nav" href="{{ prefix }}">← Back to the exporter</a>
+  </header>
+  <p class="sub">Two files go in. Everything here is downloadable, so you can start from a working example rather than from a blank page.</p>
+
+  <div class="flow">
+    <div class="step"><b>1. Product file</b><span class="muted">.xlsx or .csv — one row per product</span></div>
+    <div class="arrow">+</div>
+    <div class="step"><b>2. Template PDF</b><span class="muted">your page design, with empty product boxes</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><b>Finished catalog</b><span class="muted">one PDF, products laid into the boxes</span></div>
+  </div>
+
+  <div class="toc">
+    <a href="#products">1. The product file</a>
+    <a href="#template">2. The template PDF</a>
+    <a href="#settings">3. The two settings</a>
+    <a href="#result">4. What comes back</a>
+    <a href="#errors">5. If it complains</a>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2 id="products">1. The product file</h2>
+
+  <p>A plain spreadsheet. <strong>Row 1 is the header row</strong>; every row after it is one product. Column order does not matter — the tool reads the header names, not the positions.</p>
+
+  <div class="downloads">
+    <a class="btn ghost" href="{{ prefix }}/static/samples/catalog-products-template.xlsx" download>Download the .xlsx template</a>
+    <a class="btn ghost" href="{{ prefix }}/static/samples/catalog-products-template.csv" download>Download the .csv version</a>
+  </div>
+  <p class="muted">Both are filled with 14 made-up products that really work — upload one straight back to see the tool run.</p>
+
+  <div class="scroller">
+    <table class="sheet">
+      <thead>
+        <tr><th></th><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th><th>G</th><th>H</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rownum">1</td>
+          <td>Image Src</td><td>Title</td><td>POR</td><td>Created At</td>
+          <td>Case Size</td><td>Pack Size</td><td>Price</td><td>Sale Price</td>
+        </tr>
+        <tr>
+          <td class="rownum">2</td>
+          <td>https://…/water.png</td><td>Alpine Spring Water</td><td>32</td><td></td>
+          <td>24</td><td>500ml</td><td>10.80</td><td>0.65</td>
+        </tr>
+        <tr>
+          <td class="rownum">3</td>
+          <td>https://…/cola.png</td><td>Redbrook Cola</td><td>28</td><td>NEW</td>
+          <td>24</td><td>330ml</td><td>9.60</td><td>0.59</td>
+        </tr>
+        <tr>
+          <td class="rownum">4</td>
+          <td>https://…/cereal.png</td><td>Harvest Oat Cereal</td><td>41</td><td></td>
+          <td>12</td><td>450g</td><td>14.40</td><td>1.99</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>The three columns you must have</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Column</th><th>What goes in it</th><th>Also accepted as</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>Image Src</code></td>
+          <td>A public link to the product photo. A photo on a white background works best — the tool trims the white away before placing it.</td>
+          <td><code>Image</code>, <code>Image URL</code>, <code>Photo</code></td>
+        </tr>
+        <tr>
+          <td><code>Title</code></td>
+          <td>The product name printed under the photo.</td>
+          <td><code>Product</code>, <code>Name</code>, <code>Description</code></td>
+        </tr>
+        <tr>
+          <td><code>POR</code></td>
+          <td>Profit on return, as a number. <code>32</code> and <code>32%</code> both print as <strong>32%</strong>.</td>
+          <td><code>Profit on Return</code>, <code>Margin</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Columns you can add</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Column</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>Created At</code></td><td>Put the word <code>NEW</code> in it and that product gets a NEW flash. Leave it blank otherwise.</td></tr>
+        <tr><td><code>Case Size</code></td><td>Units in a case, e.g. <code>24</code>.</td></tr>
+        <tr><td><code>Pack Size</code></td><td>Unit size, e.g. <code>500ml</code>. With Case Size it prints as <strong>24 x 500ml</strong>.</td></tr>
+        <tr><td><code>Price</code></td><td>Case price. A bare number is printed as £; a value that already starts with <code>$</code>, <code>€</code>, <code>₹</code> and so on keeps its own symbol.</td></tr>
+        <tr><td><code>Sale Price</code></td><td>The shelf price shown alongside it.</td></tr>
+        <tr><td><code>Image Position</code></td><td><code>horizontal</code> or <code>vertical</code> — only used by the <em>promotion</em> card style, to decide how the photo sits in the card.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>Adding Price or Sale Price changes the card design.</strong> Those two columns are how the tool decides you want the richer <em>promotion</em> card instead of the plain one. Leave them out for a photo-and-title catalog.
+  </div>
+
+  <h3>Rules worth knowing</h3>
+  <ul class="rules">
+    <li>Header names are matched loosely — case and spacing do not matter.</li>
+    <li><code>Image Src</code> must be a public <code>http</code> or <code>https</code> link that opens without signing in. A Google Drive or Dropbox <em>share page</em> is not an image link; a file path from your own computer will not work either, because your computer is not on the internet from here.</li>
+    <li>A product whose image fails to load still gets a card — with the title and badges, minus the photo.</li>
+    <li>Completely empty rows are skipped, so gaps in the sheet are fine.</li>
+    <li>Up to <strong>{{ max_products }} products</strong> per file. Split a bigger list and run it twice.</li>
+    <li>Saving as CSV from Excel is fine — commas, semicolons and Excel's odd encodings are all handled.</li>
+  </ul>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2 id="template">2. The template PDF</h2>
+
+  <p>The template is <strong>your page design with the product boxes left empty</strong> — your header, your colours, your footer, and a grid of blank boxes. The tool renders the page, finds those boxes, and draws one product inside each of them. It never invents a layout: whatever you draw is what you get back.</p>
+
+  <div class="note">
+    <strong>There are two blank templates, and they are not interchangeable.</strong> The promotion card is taller than the plain one, so it fits one row fewer per page — a promotion catalog built on the plain template comes out with an empty row on every page. Pick the one that matches the card style you want.
+  </div>
+
+  <h3>A. Plain template — for the <code>por-title</code> style</h3>
+  <div class="shots">
+    <figure>
+      <img src="{{ prefix }}/static/samples/template-preview-page1.png" alt="Page 1 of the plain template: a red header band across the top, then four rows of three empty boxes.">
+      <figcaption><strong>Page 1 — cover.</strong> The top of the page is free for your branding; the grid starts below it, 4 rows of 3.</figcaption>
+    </figure>
+    <figure>
+      <img src="{{ prefix }}/static/samples/template-preview-page2.png" alt="Page 2 of the plain template: five rows of three empty boxes filling the page.">
+      <figcaption><strong>Page 2 — middle.</strong> No header band, so the grid starts near the top: 5 rows of 3. Repeated as often as the product list needs.</figcaption>
+    </figure>
+  </div>
+  <div class="downloads">
+    <a class="btn ghost" href="{{ prefix }}/static/samples/catalog-template.pdf" download>Download the plain template (2 pages)</a>
+  </div>
+
+  <h3>B. Promotion template — for the <code>promotion</code> style</h3>
+  <div class="shots">
+    <figure>
+      <img src="{{ prefix }}/static/samples/promo-template-preview-page1.png" alt="Page 1 of the promotion template: header band, a clear area, then three rows of three empty boxes.">
+      <figcaption><strong>Page 1 — cover.</strong> 3 rows of 3, starting a row lower than the plain template.</figcaption>
+    </figure>
+    <figure>
+      <img src="{{ prefix }}/static/samples/promo-template-preview-page2.png" alt="Page 2 of the promotion template: a red section banner across the top, then four rows of three empty boxes.">
+      <figcaption><strong>Page 2 — middle.</strong> A banner across the top, 4 rows of 3 below it. Repeated as often as needed.</figcaption>
+    </figure>
+    <figure>
+      <img src="{{ prefix }}/static/samples/promo-template-preview-page3.png" alt="Page 3 of the promotion template: three rows of three empty boxes above a dark contact band.">
+      <figcaption><strong>Page 3 — back page.</strong> 3 rows of 3, with room underneath for contact details.</figcaption>
+    </figure>
+  </div>
+  <div class="downloads">
+    <a class="btn ghost" href="{{ prefix }}/static/samples/catalog-template-promotion.pdf" download>Download the promotion template (3 pages)</a>
+  </div>
+  <p class="muted">The banner on page 2 is doing a job, not just decorating: the tool identifies a repeating middle page by finding something in that top strip, and the promotion layout never puts a product there.</p>
+
+  <p>Both are A4. Open one in Illustrator, Canva, InDesign or Word, put your own artwork around the boxes, and export it back to PDF.</p>
+
+  <h3>The rules the grid has to follow</h3>
+  <ul class="rules">
+    <li><strong>Three boxes across.</strong> The layout is a 3-column grid — that is the one thing that is not adjustable.</li>
+    <li><strong>The boxes must actually be drawn</strong>, as visible outlines. The tool finds them by looking for their edges; a box implied by white space is invisible to it. Keep the outlines at roughly the weight in the sample — a hairline can fall below what a page render picks up.</li>
+    <li><strong>Do not move the boxes</strong> if you start from the sample. Redecorate everything around them freely; change where they sit and the tool stops recognising the page as a template.</li>
+    <li><strong>Any page size</strong> works — the grid is measured in proportions, not millimetres. The sample is A4 because that is what most people will open.</li>
+    <li>At most <strong>{{ max_template_pages }} pages</strong>. This is the page design to repeat, not the finished catalog.</li>
+  </ul>
+
+  <h3>How many pages your template needs</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Template</th><th>What the tool does with it</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1 page</strong></td><td>That one design is used for every page of the catalog.</td></tr>
+        <tr><td><strong>2 pages</strong> <span class="muted">(template A)</span></td><td>One page must be cover style and the other middle style, in either order. The cover is used first and last; the middle page repeats in between.</td></tr>
+        <tr><td><strong>3 or more</strong> <span class="muted">(template B)</span></td><td>Page 1 is the cover, page 2 is the repeating middle page, and the final page is the back page. Pages between those are ignored.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2 id="settings">3. The two settings</h2>
+
+  <h3>Card style</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Setting</th><th>What each card shows</th></tr></thead>
+      <tbody>
+        <tr><td><code>auto</code></td><td>Picks for you: <em>promotion</em> if the file has a Price or Sale Price column, <em>por-title</em> if it does not. Leave it here unless the result is not what you wanted.</td></tr>
+        <tr><td><code>por-title</code></td><td>Photo, title, POR badge, NEW flash. The plain catalog card — use <strong>template A</strong>.</td></tr>
+        <tr><td><code>promotion</code></td><td>Adds the case price, the shelf price and the pack size in a panel beside the photo — use <strong>template B</strong>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>Downloaded template A but your sheet has prices in it?</strong> <code>auto</code> will switch to the promotion card and the pages will not line up. Either set the style to <code>por-title</code> by hand, or take template B instead.
+  </div>
+
+  <p class="muted">The promotion card gives roughly half its width to the price panel, so keep titles to two or three short words — a long single word cannot be wrapped and will be cut off.</p>
+
+  <h3>Quality</h3>
+  <p><strong>normal</strong> rebuilds each page as an image — reliable, and the smaller file. <strong>high</strong> keeps your template's own text and vectors crisp and lays the products over the top, which is what you want for print. High takes longer and produces a larger PDF; try normal first.</p>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2 id="result">4. What comes back</h2>
+  <p>One PDF, downloaded straight to your device. Both of these are the sample product file run through a downloadable template, unedited — nothing was touched afterwards.</p>
+
+  <h3>Plain: the 14 sample products through template A</h3>
+  <div class="shots">
+    <figure>
+      <img src="{{ prefix }}/static/samples/example-output-page1.png" alt="Finished catalog page 1: the branded header band, then twelve product cards, each with a photo, a title, a POR badge, and a NEW flash on some.">
+      <figcaption>Page 1 — twelve products in the cover grid.</figcaption>
+    </figure>
+    <figure>
+      <img src="{{ prefix }}/static/samples/example-output-page2.png" alt="Finished catalog page 2: the remaining two product cards at the top of the middle grid.">
+      <figcaption>Page 2 — the list ran to 14, so the last two carry over.</figcaption>
+    </figure>
+  </div>
+
+  <h3>Promotion: the same products through template B</h3>
+  <div class="shots">
+    <figure>
+      <img src="{{ prefix }}/static/samples/example-promo-page1.png" alt="Finished promotion catalog page 1: nine product cards, each with a photo, a price, a shelf price, a POR flash and the pack size.">
+      <figcaption>Page 1 — nine cards, each carrying its price panel.</figcaption>
+    </figure>
+    <figure>
+      <img src="{{ prefix }}/static/samples/example-promo-page2.png" alt="Finished promotion catalog back page: five product cards above the dark contact band.">
+      <figcaption>The remaining five fitted on the back page, so no middle page was needed.</figcaption>
+    </figure>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2 id="errors">5. If it complains</h2>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>What it says</th><th>What to change</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Missing required columns…</td>
+          <td>Row 1 of the product file is not the header row, or one of <code>Image Src</code> / <code>Title</code> / <code>POR</code> is spelled in a way the tool does not recognise. Compare it with the downloadable template.</td>
+        </tr>
+        <tr>
+          <td>The PDF must contain the supported 3-column product box grid</td>
+          <td>The template has no boxes the tool can find. Either they are not drawn as outlines, they have been moved, or there are not three across. Start from the blank template above.</td>
+        </tr>
+        <tr>
+          <td>Page 2 must be a middle-style 3-column grid page</td>
+          <td>On a template of 3 pages or more, page 2 is the design that repeats, so it needs the full grid — not a cover or a back page.</td>
+        </tr>
+        <tr>
+          <td>Invalid 2-page PDF template…</td>
+          <td>Both pages are the same style. A 2-page template needs one cover-style page and one middle-style page.</td>
+        </tr>
+        <tr>
+          <td>Every page has an empty row of boxes</td>
+          <td>Plain template, promotion cards. Either switch the card style to <code>por-title</code> or use the promotion template.</td>
+        </tr>
+        <tr>
+          <td>Photos are missing from the finished PDF</td>
+          <td>The image links could not be opened from the internet. Paste one into a private browser window — if it does not show a picture on its own, the tool cannot read it either.</td>
+        </tr>
+        <tr>
+          <td>Someone else's catalog is generating right now</td>
+          <td>Exactly what it says — one catalog is built at a time. Wait a minute and press the button again.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
+
+{% block foot %}
+  <p>Limits: {{ max_mb }} MB per upload, {{ max_products }} products per file, {{ max_template_pages }} template pages, a handful of catalogs per hour.</p>
+{% endblock %}

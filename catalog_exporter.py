@@ -89,19 +89,32 @@ WHITE_TRIM_THRESHOLD = 245
 HIGH_QUALITY_OVERLAY_SCALE = 2
 TEMPLATE_ANALYSIS_RENDER_DPI = 72
 NORMAL_EXPORT_RENDER_DPI = 150
+# Each canonical field maps to the header names accepted for it, in priority
+# order. The long `metafield: ...` names come first because they are what the
+# original client's Shopify export produces and a file carrying both should
+# still resolve the way it always has. The short names after them are what
+# anybody else writing a product file by hand would reach for, and they are
+# what the public template and the Guide document.
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
-    "image_src": ("image src",),
-    "title": ("title",),
+    "image_src": ("image src", "image_src", "image url", "image", "photo", "picture"),
+    "title": ("title", "product", "product name", "name", "description"),
     "por": (
         "metafield: custom.tier_c_profit_on_return [number_decimal]",
         "metafield: custom.promotion_profit_on_return [number_decimal]",
+        "por", "profit on return", "profit_on_return", "margin",
     ),
-    "created_at": ("created at",),
-    "main_price": ("metafield: custom.promotion_case_price [number_decimal]",),
-    "sale_price": ("metafield: custom.retail_sale_price_rsp [number_decimal]",),
-    "case_size": ("metafield: custom.case_size [number_integer]", "case", "case size"),
-    "pack_size": ("pack_size", "pack size"),
-    "image_position": ("image position",),
+    "created_at": ("created at", "created_at", "new"),
+    "main_price": (
+        "metafield: custom.promotion_case_price [number_decimal]",
+        "price", "case price", "case_price",
+    ),
+    "sale_price": (
+        "metafield: custom.retail_sale_price_rsp [number_decimal]",
+        "sale price", "sale_price", "rsp", "retail price",
+    ),
+    "case_size": ("metafield: custom.case_size [number_integer]", "case", "case size", "case_size"),
+    "pack_size": ("pack_size", "pack size", "pack", "unit size"),
+    "image_position": ("image position", "image_position", "orientation"),
 }
 REQUIRED_HEADERS = {
     "image_src": "Image Src",
@@ -147,6 +160,11 @@ POR_BADGE_IMAGE_FILE = DEFAULT_POR_BADGE_IMAGE_FILE
 NEW_BADGE_IMAGE_FILE = DEFAULT_NEW_BADGE_IMAGE_FILE
 POR_BADGE_P6_IMAGE_FILE = DEFAULT_P6_POR_PANEL_IMAGE_FILE
 
+# Overridden by configure_image_loading(); see that function for why.
+IMAGE_FETCHER: Callable[[str], bytes] | None = None
+ALLOW_LOCAL_IMAGE_PATHS = True
+MAX_PRODUCTS: int | None = None
+
 
 @dataclass
 class Product:
@@ -166,6 +184,35 @@ class PageClassification:
     kind: str
     first_score: float
     middle_score: float
+
+
+def configure_image_loading(
+    *,
+    fetcher: Callable[[str], bytes] | None = None,
+    allow_local_paths: bool | None = None,
+    max_products: int | None = None,
+    cache_dir: Path | None = None,
+) -> None:
+    """Narrow what a product file is allowed to make this module do.
+
+    Defaults are the permissive command-line ones. `app.py` calls this at import
+    to swap in an SSRF-guarded fetcher, forbid filesystem paths, and cap the row
+    count -- the three things that separate "a file I wrote" from "a file a
+    stranger uploaded".
+    """
+    global IMAGE_FETCHER, ALLOW_LOCAL_IMAGE_PATHS, MAX_PRODUCTS
+    global CACHE_DIR, IMAGE_CACHE_DIR, PDF_CACHE_DIR
+
+    if fetcher is not None:
+        IMAGE_FETCHER = fetcher
+    if allow_local_paths is not None:
+        ALLOW_LOCAL_IMAGE_PATHS = allow_local_paths
+    if max_products is not None:
+        MAX_PRODUCTS = max_products
+    if cache_dir is not None:
+        CACHE_DIR = cache_dir
+        IMAGE_CACHE_DIR = CACHE_DIR / "images"
+        PDF_CACHE_DIR = CACHE_DIR / "pdf"
 
 
 def configure_asset_paths(
@@ -230,19 +277,29 @@ def format_por(value: object) -> str:
     return f"{normalized}%"
 
 
+# A bare number is rendered with this symbol. It stays £ because that is what
+# every catalog this was built for uses; a price that arrives already carrying
+# its own symbol keeps that symbol instead, so the tool is not GBP-only.
+DEFAULT_CURRENCY_SYMBOL = "£"
+CURRENCY_SYMBOLS = "£$€¥₹₽₩₪R"
+
+
 def format_price(value: object) -> str:
     raw = str(value or "").strip()
     if not raw:
         return ""
-    raw = raw.replace("£", "").replace(",", "")
+
+    symbol = raw[0] if raw[:1] in set(CURRENCY_SYMBOLS) else DEFAULT_CURRENCY_SYMBOL
+    body = raw[1:].strip() if raw[:1] in set(CURRENCY_SYMBOLS) else raw
+    body = body.replace(",", "")
     try:
-        number = Decimal(raw)
+        number = Decimal(body)
     except InvalidOperation:
-        return raw if raw.startswith("£") else f"£{raw}"
+        return raw
 
     quantized = number.quantize(Decimal("0.01"))
     normalized = format(quantized, "f").rstrip("0").rstrip(".")
-    return f"£{normalized}"
+    return f"{symbol}{normalized}"
 
 
 def format_case_pack(case_value: object, pack_value: object) -> str:
@@ -407,6 +464,13 @@ def load_products(excel_path: Path, template_variant: TemplateVariant = "default
                 ),
             )
         )
+
+        if MAX_PRODUCTS is not None and len(products) > MAX_PRODUCTS:
+            rows.close()
+            raise ValueError(
+                f"This product file has more than {MAX_PRODUCTS} products. "
+                "Split it into smaller files and generate one catalog per file."
+            )
 
     return products
 
@@ -960,10 +1024,18 @@ def load_product_image(excel_path: Path, source: str | None) -> Image.Image | No
                 with Image.open(cached_path) as cached_image:
                     return cached_image.convert("RGBA")
 
-            data = download_image(source)
+            data = (IMAGE_FETCHER or download_image)(source)
             cached_path.write_bytes(data)
             with Image.open(io.BytesIO(data)) as downloaded_image:
                 return downloaded_image.convert("RGBA")
+
+        # A filesystem path in the Image Src column is a convenience for the
+        # command-line/desktop use, where the operator owns both the machine
+        # and the spreadsheet. The hosted app turns it off: there, the
+        # spreadsheet is a stranger's upload and a path would be an arbitrary
+        # file read dressed up as a product photo.
+        if not ALLOW_LOCAL_IMAGE_PATHS:
+            return None
 
         candidate = Path(source)
         if not candidate.is_absolute():
