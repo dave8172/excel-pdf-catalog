@@ -1,6 +1,32 @@
-# excel-to-pdf — Catalog PDF Exporter
+# excel-to-pdf — two catalog tools, one process
 
-> Turns a product spreadsheet plus a template PDF into a finished catalog PDF. Built for the owner's own Upwork client work, **public since 2026-09-06** at `https://stuffs.bid/topdf` as one of the micro-tools on that domain.
+> A product spreadsheet plus a template PDF becomes a finished catalog PDF. **Two tools do that here, and keeping them apart is the point of the current design** — see the split below before changing anything.
+
+## The split (2026-09-07) — read this first
+
+The tool was built for one Upwork client's catalog and went public on 2026-09-06 exactly as it was. That was wrong: the public product was carrying **that client's design** — the profit-on-return and NEW badge artwork, the promotion card, their Shopify metafield column names, their fixed page grid, and sample assets built to imitate all of it. None of that is ours to publish.
+
+So there are now two tools, and they share only a process:
+
+| | **topdf** (public) | **client** |
+|---|---|---|
+| Address | `stuffs.bid/topdf` | `excelpdf.duckdns.org` |
+| Engine | `simple_catalog.py` | `catalog_exporter.py` (untouched) |
+| Columns | Image URL, Name, Description, Price, Case Size | `Image Src`, `Title`, `POR`, metafield spellings, … |
+| Card | one design, no badges | POR badge, NEW flash, promotion price panel |
+| Options | none | card style (`auto`/`por-title`/`promotion`), quality (`normal`/`high`) |
+| Grid | measured off the template | fixed reference rows/columns |
+| Samples | `web/static/samples/` | `web/client_static/samples/` |
+| Indexed | yes | no |
+
+**The rules that keep them apart, all enforced in code:**
+
+- **`catalog_exporter.py` is the client's and is not modified for public features.** The public engine imports only generic helpers from it — PDF page render/merge, the hardened image fetch, white-trim, font lookup. Nothing design-bearing.
+- **`web/client_static/` is outside Flask's static folder** and is served by one route that 404s unless the request arrived on the client host. Putting those files under `web/static/` with a different prefix would still expose them; this does not.
+- **Each export endpoint 404s on the wrong host** (`generate_public` on the client host, `generate_client` on the public one), so neither engine is reachable from the other's address.
+- **One process, not two.** The box is 2GB and one export peaks near 350MB, so a second gunicorn service is the thing that must not happen. Both tools go through the same `BoundedSemaphore(1)`.
+
+**Why one process and not two repos:** the split is about what is *published*, not about isolation for its own sake. A second service would double the memory floor on a box that cannot afford it, and the host check is a two-line function.
 
 ## What it is
 
@@ -11,44 +37,112 @@
 
 ## Where it lives
 
-Two hostnames, on purpose:
-
 | URL | What it is |
 |---|---|
-| `https://stuffs.bid/topdf` | **The public address.** A Next.js rewrite on the `stuffboard` deployment. |
+| `https://stuffs.bid/topdf` | **topdf's public address.** A Next.js rewrite on the `stuffboard` deployment. |
 | `https://topdf.stuffs.bid/topdf` | The origin — this app, on this VPS. Serves the same pages, and receives the exports directly. |
-| `https://excelpdf.duckdns.org` | Retired 2026-09-06. 301s to `stuffs.bid/topdf`, nothing else. |
+| `https://excelpdf.duckdns.org` | **The client tool.** Restored 2026-09-07, having been a redirect to `stuffs.bid/topdf` for one day. |
 
-**Only the pages go through the rewrite; the export does not.** `tool.html` posts to the origin's absolute URL. Two hard platform limits make the proxy hop the wrong place for it: Vercel caps a proxied body at 4.5MB (a template PDF plus a finished catalog routinely exceeds that) and times an origin out at two minutes (a large catalog with cold image downloads exceeds that too). Routing the export through Vercel would break exactly the big jobs the tool exists for. CORS on the origin allows `https://stuffs.bid`, and exposes `Content-Disposition` so the page can read the filename off the download.
+**Only the pages go through the rewrite; the export does not.** `landing.html` posts to the origin's absolute URL. Two hard platform limits make the proxy hop the wrong place for it: Vercel caps a proxied body at 4.5MB (a template PDF plus a finished catalog routinely exceeds that) and times an origin out at two minutes (a large catalog with cold image downloads exceeds that too). Routing the export through Vercel would break exactly the big jobs the tool exists for. CORS on the origin allows `https://stuffs.bid`, and exposes `Content-Disposition` so the page can read the filename off the download.
 
 The app is served under the `/topdf` **path prefix** so both hostnames serve identical URLs — the same `basePath` convention the other showcase zones on that domain use. The index route is registered with `strict_slashes=False`: Next.js normalises `/topdf/` to `/topdf`, and a Flask rule written as `/topdf/` would redirect it straight back — an infinite loop whose `Location` also leaks the origin hostname into the address bar.
 
 ## Layout
 
 ```
-catalog_exporter.py     the engine. 2,200 lines, shared with the CLI, knows nothing about HTTP
-export_pdf.py           command-line entry point
-app.py                  the hosted app: routes, validation, quotas, error mapping
-web/security.py         SSRF-guarded image fetch + upload sniffing
-web/limits.py           SQLite per-visitor quota + the one-export-at-a-time semaphore
-web/templates/          base.html, tool.html, guide.html
-web/static/samples/     everything the Guide hands out — all generated, none from a client
-scripts/make_samples.py regenerates that folder end to end
+catalog_exporter.py            the CLIENT engine. 2,200 lines, shared with the CLI, no HTTP
+simple_catalog.py              the PUBLIC engine. Own columns, own card, own grid detection
+export_pdf.py                  command-line entry point (client engine)
+app.py                         both tools: host routing, validation, quotas, error mapping
+web/security.py                SSRF-guarded image fetch + upload sniffing
+web/limits.py                  SQLite per-visitor quota + the one-export-at-a-time semaphore
+web/templates/base.html        public chrome (nav, meta, canonical)
+web/templates/landing.html     topdf's landing page — the form lives on it
+web/templates/guide.html       topdf's guide
+web/templates/client.html      the client tool, standalone: no shared base, noindex
+web/static/samples/            topdf's samples. Teal, workshop products, five columns
+web/client_static/samples/     the client tool's samples. Never served on a public host
+scripts/make_public_samples.py regenerates web/static/samples end to end, and verifies it
+scripts/make_samples.py        regenerates web/client_static/samples the same way
 ```
+
+## topdf's engine — `simple_catalog.py`
+
+Five columns, two required (`Image URL`, `Name`); `Description`, `Price` and `Case Size` are
+optional and simply do not appear on the card when absent. One card design, one quality, no
+options anywhere in the UI.
+
+**The part worth understanding is the grid detection**, because it is what makes this a
+product rather than the client's tool with the labels changed. The client engine knows where
+boxes are; this one has to find them on a stranger's template. It builds an ink mask, keeps
+only ink that is *thin* (`_thin_ink`), takes the rows and columns holding a long unbroken run
+of it, treats every adjacent pair of lines as a candidate rectangle, and keeps the ones whose
+four edges are inked and whose middle is still blank.
+
+Two things in there are load-bearing and were each found by a failing template:
+
+- **The thinness filter.** Without it a solid header band makes *every column beneath it*
+  look like a vertical rule — a column through the band is one long unbroken run of ink — and
+  detection returns nothing at all. Keeping only ink with white a few pixels either side
+  leaves the rules and drops the fills.
+- **The blank-middle test.** Edge ink alone cannot tell a box from a banner. This is what
+  stops products being drawn over a section banner or a dark footer strip.
+
+Performance without numpy: the mask goes to `bytes` once and run lengths come from
+`bytes.split(b"\x00")`, which is C-speed. Per-pixel Python over a 150dpi A4 page is seconds;
+this is milliseconds. Columns use `Image.Transpose.TRANSPOSE` (not `ROTATE_90`) so the
+indexes that come back are already x coordinates and need no un-flipping.
+
+Pagination rule, chosen so it needs no setting: template pages are used in order, and **the
+last page that has boxes** repeats until the products run out. A cover plus a repeating inner
+page therefore just works. It has to be the last page *with boxes* — a template ending in a
+terms page would otherwise repeat that forever and place nothing.
+
+## topdf's landing page (2026-09-07)
+
+`/topdf` was the upload form and nothing else, titled "Catalog PDF Exporter" with a
+`noindex` on it — so a stranger arriving cold had no idea what it made, and nobody could
+arrive cold in the first place. It is now a real product page: hero with a finished export
+beside it, before/after pairs, the form itself, the five columns, how-it-works, who it is
+for, features, and an FAQ. **The form stays on `/topdf`** rather than moving behind a
+landing page, so the tool is never more than one screen away.
+
+**It is indexable now, and that is the point** — the tool is public to find out whether the
+job it does is wanted outside one client, and a page search engines may not read cannot
+answer that. Three things were in the way and all three are gone: the `noindex` meta tag,
+the blanket `X-Robots-Tag` in `add_common_headers`, and a title that named the product
+instead of the task. `stuffs.bid` is otherwise unaffected — see that project's CLAUDE.md.
+
+Two hostnames serve identical HTML, so every page carries `<link rel="canonical">` pointing
+at `PUBLIC_BASE` (`https://stuffs.bid`), and the origin's own `robots.txt` still disallows
+everything — a crawler only reads that file if it reached `topdf.stuffs.bid` directly, and
+the right answer there is "not here."
+
+**One CSS collision worth remembering:** the new site header was first written as
+`nav.bar`, and `.bar` is already the export progress element — 3px tall, `overflow:hidden`,
+`--panel-2` background. The header inherited the background and painted a stray band behind
+itself on every page. It renders subtly enough that reading the screenshot missed it; a
+pixel probe found it. The header is `nav.site`.
 
 ## The Guide (`/topdf/guide`)
 
-Added 2026-09-06 with the public launch. Without it a stranger cannot succeed: the template has to satisfy a page-layout detector they cannot see, and the required columns were named after one client's Shopify metafields.
+Added 2026-09-06 with the public launch, rewritten 2026-09-07 for topdf's own five columns. Without it a stranger cannot succeed: the template has to satisfy a detector they cannot see.
 
-**No client file is used anywhere in it.** `scripts/make_samples.py` draws the product images, invents the 14 products, and builds both template PDFs from the exporter's own reference-grid constants — so the samples are correct by construction rather than by copying one that happens to work. Re-run it after any change to the grid constants or the sample data:
+### topdf's samples — `scripts/make_public_samples.py`
+
+Its own palette (teal, `#0F5257`), its own products (workshop and site supplies, not the client's grocery catalog), its own templates and its own five columns. **Nothing is shared with the client samples, deliberately** — the whole reason the split exists is that the public product must not carry the client's look.
 
 ```bash
-./.venv/bin/python scripts/make_samples.py
+./.venv/bin/python scripts/make_public_samples.py
 ```
 
-It **verifies as it goes** — it runs the exporter's own `classify_page_layout` over each template page and refuses to finish if a page classifies wrong, then exports both samples for real to produce the "what comes back" screenshots. A broken guide fails the script instead of shipping.
+It **verifies as it goes**: every template it draws is run back through `simple_catalog.find_product_boxes` and the script fails rather than shipping a template the tool cannot read. It caught the header-band detection bug — the run printed `found 0 product boxes, expected 12` instead of publishing a guide whose own sample does not work.
 
-Two things that took a round to get right, both encoded in the script's comments:
+### The client tool's samples — `scripts/make_samples.py`
+
+Unchanged apart from its output path (`web/client_static/samples/`) and the sample image base URL, which now points at the client host. Re-run it after any change to the grid constants or the sample data. It verifies with `classify_page_layout` the same way.
+
+Two things that took a round to get right there, both encoded in the script's comments:
 
 - **Border weight.** The detector samples for ink ~2px inside each box edge on a 72dpi render. A hairline centred on the outline half-misses it. The strokes are drawn fully *inside* the outline at 3.2pt, so the box keeps its exact outer size and the ink lands where the detector looks.
 - **The promotion template is three pages, and the plain one is two.** `P6_FIRST/MIDDLE/LAST_PAGE_ROWS` are three *different* row sets; a 2-page promotion template makes the exporter draw last-page products into rows the cover page has no boxes in. Its page 2 also carries a banner in the top-row band rather than boxes — a middle page is *recognised* by ink there, but the promotion layout never fills it.
@@ -100,7 +194,9 @@ nginx: `/etc/nginx/sites-available/topdf` (+ rate-limit zones in `conf.d/topdf-l
 
 ## Usage measurement
 
-`logs/usage.jsonl` (gitignored), one line per export attempt: outcome, duration, template pages, output size, and whether it came via the proxy or direct. No IPs, no filenames, no content — deliberately too thin to answer anything except *does anyone use this*, which is the only reason the tool is public.
+`logs/usage.jsonl` (gitignored), one line per export attempt: **which tool** (`topdf` or `client`), outcome, duration, template pages, output size, and whether it came via the proxy or direct. No IPs, no filenames, no content — deliberately too thin to answer anything except *does anyone use this*, which is the only reason the public tool exists.
+
+**The `tool` field is the point of it now.** Before the split, the owner's own weekly client catalogs and a stranger's curiosity landed in the same counter, so the file could not answer the one question it was written for. Filter on `tool == "topdf"` for demand; `client` runs are work, not signal.
 
 ## System dependencies
 

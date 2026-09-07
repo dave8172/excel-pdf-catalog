@@ -1,0 +1,565 @@
+{% extends "base.html" %}
+{% block title %}topdf — turn a product spreadsheet into a catalog PDF{% endblock %}
+{% block wrapclass %}landing{% endblock %}
+
+{% block head %}
+<style>
+  /* --- hero --------------------------------------------------------------- */
+  /* Two columns on a desktop: the claim on the left, and the thing it claims
+     to make on the right. Below 860px the picture falls under the words. */
+  .hero {
+    display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 42px; align-items: center; padding: 10px 0 4px;
+  }
+  .hero h1 {
+    font-size: clamp(1.75rem, 5.2vw, 2.6rem); line-height: 1.14;
+    letter-spacing: -0.03em; margin: 0 0 14px;
+  }
+  .hero .lead { font-size: 1.05rem; color: #cfd3d8; margin: 0 0 8px; }
+  .hero .lead strong { color: var(--text); }
+  .hero .lead.soft { font-size: 0.95rem; color: var(--muted); }
+  .hero-shot { margin: 0; min-width: 0; }
+  .hero-shot img {
+    display: block; width: 100%; height: auto; border-radius: 10px;
+    border: 1px solid var(--line); background: #fff;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  }
+  .hero-shot figcaption { color: var(--muted); font-size: 0.82rem; margin-top: 10px; }
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; gap: 26px; }
+  }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 22px 0 6px; }
+  .cta .btn { padding: 15px 22px; }
+  .trust { display: flex; gap: 8px 20px; flex-wrap: wrap; margin: 16px 0 0; padding: 0; list-style: none; }
+  .trust li { color: var(--muted); font-size: 0.86rem; }
+  .trust li::before { content: "✓ "; color: var(--good); }
+
+  /* --- generic section ---------------------------------------------------- */
+  section { margin-top: 52px; }
+  section > h2 { margin-top: 0; }
+  .lede { color: #cfd3d8; max-width: 64ch; }
+
+  /* --- before / after ----------------------------------------------------- */
+  .ba { display: flex; gap: 16px; flex-wrap: wrap; align-items: stretch; margin: 18px 0 0; }
+  .ba figure { margin: 0; flex: 1 1 240px; min-width: 0; }
+  .ba img {
+    display: block; width: 100%; height: auto; border-radius: 10px;
+    border: 1px solid var(--line); background: #fff;
+  }
+  .ba figcaption { color: var(--muted); font-size: 0.84rem; margin-top: 8px; }
+  .ba figcaption b { color: var(--text); display: block; font-size: 0.9rem; }
+  .ba .arrow { align-self: center; color: var(--muted); font-size: 1.5rem; flex: 0 0 auto; }
+
+  /* --- the tool ----------------------------------------------------------- */
+  #make { scroll-margin-top: 16px; }
+  form { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+  label { font-weight: 600; font-size: 0.94rem; display: block; margin-bottom: 6px; }
+  .field { background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 14px; }
+  .field .hint { color: var(--muted); font-size: 0.82rem; margin: 6px 0 0; }
+  input[type=file] {
+    width: 100%; padding: 11px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text); font-size: 0.94rem; font-family: inherit;
+  }
+  #status { margin-top: 4px; font-size: 0.9rem; color: var(--muted); display: none; }
+  #status.done { color: var(--good); }
+  #status.failed { color: var(--bad); }
+  .bar { height: 3px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 10px; display: none; }
+  .bar i { display: block; height: 100%; width: 34%; background: var(--accent); animation: slide 1.5s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -34%; } 100% { margin-left: 100%; } }
+  .startline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: -4px; }
+
+  /* --- the columns table -------------------------------------------------- */
+  .cols td:first-child, .cols td:nth-child(2) { white-space: nowrap; }
+  .req { color: var(--good); font-weight: 600; font-size: 0.82rem; }
+  .opt { color: var(--muted); font-size: 0.82rem; }
+
+  /* --- steps -------------------------------------------------------------- */
+  .steps { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 18px; counter-reset: step; padding: 0; }
+  .steps > li {
+    flex: 1 1 240px; list-style: none; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+  }
+  .steps > li::before {
+    counter-increment: step; content: counter(step);
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 50%; background: var(--accent);
+    color: #fff; font-size: 0.82rem; font-weight: 700; margin-bottom: 10px;
+  }
+  .steps b { display: block; margin-bottom: 4px; }
+  .steps p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+  .steps a { font-size: 0.9rem; }
+
+  /* --- who / features ----------------------------------------------------- */
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 18px; }
+  /* Four cards under auto-fit land 3 + 1, and the orphan reads as a mistake. */
+  .grid.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .grid .card h3 { margin: 0 0 6px; font-size: 0.98rem; }
+  .grid .card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+
+  /* --- faq ---------------------------------------------------------------- */
+  .faq { margin-top: 14px; }
+  .faq details { border-bottom: 1px solid var(--line); padding: 14px 2px; }
+  .faq details[open] summary { color: var(--text); }
+  .faq summary {
+    cursor: pointer; font-weight: 600; font-size: 0.96rem; color: #cfd3d8;
+    list-style: none; display: flex; justify-content: space-between; gap: 14px;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: "+"; color: var(--muted); font-weight: 400; }
+  .faq details[open] summary::after { content: "−"; }
+  .faq details p { font-size: 0.92rem; color: var(--muted); margin: 10px 0 2px; }
+
+  .closer { text-align: center; padding: 28px 20px; }
+  .closer h3 { margin: 0 0 6px; font-size: 1.2rem; }
+  .closer p { margin: 0 auto; max-width: 52ch; }
+  .closer .cta { justify-content: center; margin-bottom: 0; }
+  .signoff { margin-top: 18px; font-size: 0.88rem; color: var(--muted); text-align: center; }
+</style>
+{% endblock %}
+
+{% block body %}
+  <div class="hero">
+    <div class="hero-copy">
+      <h1>Turn a product spreadsheet into a finished catalog PDF</h1>
+      <p class="lead">
+        Upload your product list and your own template page. topdf finds the empty boxes you drew,
+        fits a product into each one — photo, name, description, price, case size — and hands back
+        the catalog, paginated and ready to send.
+      </p>
+      <p class="lead soft">
+        No settings to get wrong. Two files in, one PDF out, and the design stays yours.
+      </p>
+
+      <div class="cta">
+        <button type="button" class="btn sample-btn">Try it with sample files</button>
+        <a class="btn ghost" href="#make">Use my own files</a>
+      </div>
+      <ul class="trust">
+        <li>No sign-up</li>
+        <li>Free</li>
+        <li>Nothing stored</li>
+        <li>.xlsx or .csv</li>
+      </ul>
+    </div>
+    <figure class="hero-shot">
+      <img src="{{ prefix }}/static/samples/example-one-page-page1.png"
+           alt="A finished catalog page made by topdf: a teal brand bar across the top, then twelve product cards in a grid, each with a photo, a name, a short description and a price.">
+      <figcaption>A real export — 12 products, one template page, about ten seconds.</figcaption>
+    </figure>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section id="examples">
+    <h2>What comes out</h2>
+    <p class="lede">
+      Every picture below is real: a blank template on the left, and the finished PDF that came back
+      from it on the right. Both templates are downloadable, and nothing was touched afterwards.
+    </p>
+
+    <h3>One template page, repeated</h3>
+    <div class="ba">
+      <figure>
+        <img src="{{ prefix }}/static/samples/template-one-page-page1.png"
+             alt="A blank one-page template: a teal brand bar across the top, then four rows of three empty product boxes.">
+        <figcaption><b>Your template</b>Your branding, with the product boxes left empty.</figcaption>
+      </figure>
+      <div class="arrow" aria-hidden="true">→</div>
+      <figure>
+        <img src="{{ prefix }}/static/samples/example-one-page-page1.png"
+             alt="The finished catalog page: the same brand bar, with twelve product cards laid into the grid.">
+        <figcaption><b>What you get back</b>Every product placed, sized and captioned.</figcaption>
+      </figure>
+    </div>
+
+    <h3>A cover page, then a page that repeats</h3>
+    <div class="ba">
+      <figure>
+        <img src="{{ prefix }}/static/samples/template-two-page-page1.png"
+             alt="A blank two-page template's cover: brand bar, room for a title, then three rows of three empty boxes.">
+        <figcaption><b>Your template, page 1</b>Fewer boxes, because the title needs the room.</figcaption>
+      </figure>
+      <div class="arrow" aria-hidden="true">→</div>
+      <figure>
+        <img src="{{ prefix }}/static/samples/example-two-page-page1.png"
+             alt="The finished cover page: the title, then nine product cards below it.">
+        <figcaption><b>What you get back</b>Page 2 then repeats until the products run out.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section id="make">
+    <h2>Make one now</h2>
+    <p class="lede">
+      Two files in, one PDF out. No account, and nothing you upload is kept — the files and the
+      finished catalog are deleted the moment the download starts.
+    </p>
+
+    <form id="genForm" novalidate>
+      <div class="field">
+        <label for="excel">1. Product file</label>
+        <input type="file" id="excel" name="excel" accept=".xlsx,.csv" required>
+        <p class="hint">
+          .xlsx or .csv — one product per row, headers in row 1.
+          <a href="{{ prefix }}/static/samples/products-template.xlsx" download>Download a filled-in example</a>
+          · <a href="{{ prefix }}/static/samples/products-template.csv" download>.csv version</a>
+        </p>
+      </div>
+
+      <div class="field">
+        <label for="template">2. Template PDF</label>
+        <input type="file" id="template" name="template" accept=".pdf" required>
+        <p class="hint">
+          Your page design, with empty boxes where the products should go.
+          <a href="{{ prefix }}/static/samples/template-one-page.pdf" download>Download a blank one</a>
+          · <a href="{{ prefix }}/static/samples/template-two-page.pdf" download>two-page version</a>
+        </p>
+      </div>
+
+      <button type="submit" class="btn" id="submitBtn">Generate PDF</button>
+      <div class="startline">
+        <button type="button" class="btn ghost sample-btn">Try it with the sample files</button>
+        <span class="muted">no files of your own needed</span>
+      </div>
+      <div class="bar" id="bar"><i></i></div>
+      <div id="status"></div>
+    </form>
+
+    <p class="muted" style="margin-top:14px">
+      Up to {{ max_mb }} MB per upload, {{ max_products }} products per run, a handful of catalogs an hour.
+      Stuck? The <a href="{{ prefix }}/guide">guide</a> walks through both files and what every error means.
+    </p>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section id="columns">
+    <h2>The five columns</h2>
+    <p class="lede">
+      Two are required, three are optional — leave one out and it simply doesn't appear on the card.
+      Header names are matched loosely, and column order doesn't matter.
+    </p>
+    <div class="scroller">
+      <table class="cols">
+        <thead><tr><th>Column</th><th></th><th>What goes in it</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>Image URL</code></td>
+            <td class="req">required</td>
+            <td>A public link to the product photo. A photo on a white background works best — the white is trimmed away before the photo is placed.</td>
+          </tr>
+          <tr>
+            <td><code>Name</code></td>
+            <td class="req">required</td>
+            <td>The product name, printed under the photo.</td>
+          </tr>
+          <tr>
+            <td><code>Description</code></td>
+            <td class="opt">optional</td>
+            <td>A short line under the name — spec, size, material. Two lines at most, so keep it tight.</td>
+          </tr>
+          <tr>
+            <td><code>Price</code></td>
+            <td class="opt">optional</td>
+            <td>A bare number prints as £; a value that already starts with $, €, ₹ and so on keeps its own symbol.</td>
+          </tr>
+          <tr>
+            <td><code>Case Size</code></td>
+            <td class="opt">optional</td>
+            <td>A bare number prints as "24 per case". Anything else — <code>24 x 500ml</code> — is printed exactly as you typed it.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section id="how">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li>
+        <b>Draw your page once</b>
+        <p>Your header, your colours, your footer — and empty boxes where the products go. Any
+          design tool that exports a PDF works.</p>
+        <p style="margin-top:8px"><a href="{{ prefix }}/static/samples/template-one-page.pdf" download>Start from a blank template →</a></p>
+      </li>
+      <li>
+        <b>Bring the product list</b>
+        <p>One row per product: a photo link and a name, plus a description, price or case size if
+          you want them printed.</p>
+        <p style="margin-top:8px"><a href="#columns">The five columns →</a></p>
+      </li>
+      <li>
+        <b>Get the catalog back</b>
+        <p>topdf measures the boxes on your page, fits the products into them, adds pages as the
+          list needs, and returns one PDF. Next month, change the sheet and press it again.</p>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section id="who">
+    <h2>Who it's for</h2>
+    <p class="lede">Anyone who sells physical products and rebuilds the same catalog every time the list changes.</p>
+    <div class="grid two">
+      <div class="card">
+        <h3>Wholesalers &amp; distributors</h3>
+        <p>Price lists and promotional catalogs for trade buyers, rebuilt whenever the list moves.</p>
+      </div>
+      <div class="card">
+        <h3>Brands &amp; suppliers</h3>
+        <p>Line sheets and lookbooks for stockists, from the same product sheet each season.</p>
+      </div>
+      <div class="card">
+        <h3>Ecommerce sellers</h3>
+        <p>You can export your products but not lay them out. A store export already has an image
+          column and a name column in it.</p>
+      </div>
+      <div class="card">
+        <h3>Whoever does it by hand</h3>
+        <p>If someone is pasting product photos into a document one at a time, this is that job,
+          minus the afternoon.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section id="features">
+    <h2>What it does</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Your layout, not a theme</h3>
+        <p>It never invents a design. It reads the boxes you drew and fills them — so the catalog
+          looks like yours, because it is.</p>
+      </div>
+      <div class="card">
+        <h3>It measures your template</h3>
+        <p>No fixed grid to conform to. Three boxes across or five, four rows or one, different
+          sizes on the same page — it finds whatever is actually drawn.</p>
+      </div>
+      <div class="card">
+        <h3>Photos straight from links</h3>
+        <p>Product images are pulled from the URLs in your sheet, trimmed of their white background,
+          and fitted to the box without stretching.</p>
+      </div>
+      <div class="card">
+        <h3>Optional means optional</h3>
+        <p>No description, price or case size in your sheet? The card simply doesn't show them, and
+          the photo gets the space instead.</p>
+      </div>
+      <div class="card">
+        <h3>Paginates itself</h3>
+        <p>Template pages are used in order and the last one repeats until the products run out — so
+          a cover plus a repeating inner page works with no setting to find.</p>
+      </div>
+      <div class="card">
+        <h3>Any page size</h3>
+        <p>A4, Letter, or something you invented. Boxes are found where they are, not where a
+          template says they ought to be.</p>
+      </div>
+      <div class="card">
+        <h3>Nothing to configure</h3>
+        <p>One card design, one quality, chosen to balance sharpness against file size. There is no
+          settings page because there are no settings.</p>
+      </div>
+      <div class="card">
+        <h3>Nothing is stored</h3>
+        <p>Your files and the finished PDF are deleted in the same request that made them. No
+          account, no history, nothing to delete later.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section id="faq">
+    <h2>Questions</h2>
+    <div class="faq">
+      <details>
+        <summary>Do I need a template, or does it design one for me?</summary>
+        <p>You need one — that's the point. topdf places products into a design you control rather
+          than imposing a layout of its own. If you don't have one yet, download a blank template
+          above and decorate around the boxes.</p>
+      </details>
+      <details>
+        <summary>How does it know where the products go?</summary>
+        <p>It renders your template and looks for rectangles that are drawn as visible outlines and
+          still empty inside. That second half matters: a solid banner or a dark footer strip is
+          inked all the way through, so it is never mistaken for somewhere to put a product.</p>
+      </details>
+      <details>
+        <summary>What columns does my spreadsheet need?</summary>
+        <p><code>Image URL</code> and <code>Name</code> are required. <code>Description</code>,
+          <code>Price</code> and <code>Case Size</code> are optional. Names are matched loosely, so
+          <code>Image_URL</code>, <code>image url</code> and <code>Photo</code> all land in the same
+          place.</p>
+      </details>
+      <details>
+        <summary>Where do the product photos come from?</summary>
+        <p>From the links in your sheet — each one has to open in a browser without signing in.
+          A Google Drive or Dropbox <em>share page</em> is not an image link, and a file path from
+          your own computer won't work, because your computer isn't on the internet from here.
+          A row whose photo can't be loaded still gets a card, just without the picture.</p>
+      </details>
+      <details>
+        <summary>Can I use Google Sheets?</summary>
+        <p>Yes. File → Download → Comma-separated values, and upload the .csv. Excel's various
+          encodings and semicolon delimiters are handled too.</p>
+      </details>
+      <details>
+        <summary>How many products can one catalog have?</summary>
+        <p>Up to {{ max_products }} per run, and up to {{ max_mb }} MB of upload. A longer list can
+          be split and run twice.</p>
+      </details>
+      <details>
+        <summary>Are my files kept anywhere?</summary>
+        <p>No. Each run gets its own folder, the finished PDF is read into memory, and the folder is
+          deleted in the same request — before you've finished downloading it. Nothing is logged
+          except that an export happened, how long it took and how big it was.</p>
+      </details>
+      <details>
+        <summary>Is it free? What's the catch?</summary>
+        <p>It's free, with no account. If it gets popular enough to cost real money to run, that
+          will change and it will say so here first.</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section id="closing">
+    <div class="card closer">
+      <h3>Make one and see</h3>
+      <p class="muted">
+        The sample files are already loaded — one click and you'll have a finished catalog PDF in
+        about ten seconds, without uploading anything of your own.
+      </p>
+      <div class="cta">
+        <button type="button" class="btn sample-btn">Try it with sample files</button>
+        <a class="btn ghost" href="#make">Use my own files</a>
+      </div>
+    </div>
+    <p class="signoff">
+      Built by <a href="https://stuffs.bid">dave8172</a>. If you make something with it, I'd
+      genuinely like to know what for — <a href="mailto:mdhawal94@gmail.com">mdhawal94@gmail.com</a>.
+    </p>
+  </section>
+{% endblock %}
+
+{% block foot %}
+  <p><a href="{{ prefix }}/guide">Guide: what to upload</a> · <a href="#make">Make a catalog</a></p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // The export is posted straight to this app's own origin rather than through
+  // the stuffs.bid rewrite in front of it. A finished catalog can be tens of
+  // megabytes and take over a minute, and a CDN proxy hop is the wrong place
+  // for either. Same-origin visits post to themselves.
+  const ORIGIN = {{ origin | tojson }};
+  const ENDPOINT = ORIGIN + '{{ prefix }}/generate';
+  const SAMPLES = '{{ prefix }}/static/samples';
+
+  const form = document.getElementById('genForm');
+  const btn = document.getElementById('submitBtn');
+  // Three buttons run the sample: hero, form, and the closing card. All the
+  // same action, so they are collected rather than named.
+  const sampleBtns = Array.from(document.querySelectorAll('.sample-btn'));
+  const status = document.getElementById('status');
+  const bar = document.getElementById('bar');
+  let ticker = null;
+
+  function begin(message) {
+    clearInterval(ticker);  // the sample flow calls begin twice: fetch, then export
+    btn.disabled = true;
+    sampleBtns.forEach(b => { b.disabled = true; });
+    btn.textContent = 'Generating…';
+    status.className = '';
+    status.style.display = 'block';
+    bar.style.display = 'block';
+    const startedAt = Date.now();
+    // A minute of silence reads as a hang, so the wait is always counted out.
+    const tick = () => {
+      const seconds = Math.round((Date.now() - startedAt) / 1000);
+      status.textContent = message + ' ' + seconds + 's — keep this tab open.';
+    };
+    tick();
+    ticker = setInterval(tick, 1000);
+  }
+
+  function end(text, kind) {
+    clearInterval(ticker);
+    bar.style.display = 'none';
+    btn.disabled = false;
+    sampleBtns.forEach(b => { b.disabled = false; });
+    btn.textContent = 'Generate PDF';
+    status.textContent = text;
+    status.className = kind || '';
+  }
+
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function send(data, waitMessage) {
+    begin(waitMessage);
+    try {
+      const response = await fetch(ENDPOINT, { method: 'POST', body: data });
+
+      if (!response.ok) {
+        let message = 'Export failed (HTTP ' + response.status + ').';
+        try {
+          const body = await response.json();
+          if (body && body.error) message = body.error;
+        } catch (parseError) { /* non-JSON error page; keep the status line */ }
+        end(message, 'failed');
+        return;
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/);
+      saveBlob(blob, match ? decodeURIComponent(match[1]) : 'catalog.pdf');
+      end('Done — PDF downloaded.', 'done');
+    } catch (networkError) {
+      end('Export failed: the connection dropped. Please try again.', 'failed');
+    }
+  }
+
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    const excel = document.getElementById('excel');
+    const template = document.getElementById('template');
+    if (!excel.files.length || !template.files.length) {
+      end('Please choose both a product file and a template PDF.', 'failed');
+      return;
+    }
+    send(new FormData(form), 'Generating…');
+  });
+
+  async function runSample() {
+    // The hero and closing buttons are screens away from the progress line, so
+    // bring the form into view before anything starts happening off-screen.
+    document.getElementById('make').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    begin('Fetching the sample files…');
+    try {
+      const [products, template] = await Promise.all([
+        fetch(SAMPLES + '/products-template.xlsx').then(r => r.blob()),
+        fetch(SAMPLES + '/template-one-page.pdf').then(r => r.blob()),
+      ]);
+      const data = new FormData();
+      data.append('excel', products, 'sample catalog.xlsx');
+      data.append('template', template, 'sample template.pdf');
+      await send(data, 'Generating the sample…');
+    } catch (error) {
+      end('Could not load the sample files. Please try again.', 'failed');
+    }
+  }
+
+  sampleBtns.forEach(b => b.addEventListener('click', runSample));
+</script>
+{% endblock %}

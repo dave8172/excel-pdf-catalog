@@ -1,8 +1,40 @@
-{% extends "base.html" %}
-{% block title %}Catalog PDF Exporter{% endblock %}
-
-{% block head %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Catalog PDF Exporter</title>
+{#
+  The client tool. Standalone on purpose — it does not extend the public
+  `base.html`, because that carries topdf's branding and navigation and this
+  page must not. Everything specific to the client's catalog design (POR and
+  NEW badges, the promotion card, the auto/quality choices, the fixed
+  reference grid) lives here and on this host only.
+#}
 <style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1a1d24; --line: #2a2f3a;
+    --text: #e8e8e8; --muted: #9aa0a6; --accent: #4f7cff;
+    --good: #7ad48c; --bad: #ff9a9a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; background: var(--bg); color: var(--text);
+    line-height: 1.55; -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 680px; margin: 0 auto; padding: 22px 16px 72px; }
+  header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  header.top h1 { font-size: 1.3rem; margin: 0; letter-spacing: -0.01em; }
+  p.sub { color: var(--muted); margin: 2px 0 0; font-size: 0.92rem; }
+  a { color: var(--accent); }
+  code {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;
+    padding: 1px 5px; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap;
+  }
   form { display: flex; flex-direction: column; gap: 14px; margin-top: 22px; }
   label { font-weight: 600; font-size: 0.94rem; display: block; margin-bottom: 6px; }
   .field { background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 14px; }
@@ -13,20 +45,28 @@
   }
   .row { display: flex; gap: 14px; }
   .row > .field { flex: 1; min-width: 0; }
+  .btn {
+    display: inline-block; padding: 15px 18px; border-radius: 12px; border: none;
+    font-size: 1.02rem; font-weight: 600; background: var(--accent); color: #fff;
+    cursor: pointer; text-decoration: none; text-align: center; font-family: inherit;
+  }
+  .btn:disabled { background: #33415e; cursor: default; }
   #status { margin-top: 4px; font-size: 0.9rem; color: var(--muted); display: none; }
   #status.done { color: var(--good); }
   #status.failed { color: var(--bad); }
   .bar { height: 3px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 10px; display: none; }
   .bar i { display: block; height: 100%; width: 34%; background: var(--accent); animation: slide 1.5s ease-in-out infinite; }
   @keyframes slide { 0% { margin-left: -34%; } 100% { margin-left: 100%; } }
-  .startline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: -4px; }
+  footer.foot {
+    margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 0.84rem;
+  }
 </style>
-{% endblock %}
-
-{% block body %}
+</head>
+<body>
+<div class="wrap">
   <header class="top">
     <h1>Catalog PDF Exporter</h1>
-    <a class="nav" href="{{ prefix }}/guide">What can I upload? →</a>
   </header>
   <p class="sub">A product list plus your template page, back as a finished catalog PDF.</p>
 
@@ -40,7 +80,7 @@
     <div class="field">
       <label for="template">Template PDF</label>
       <input type="file" id="template" name="template" accept=".pdf" required>
-      <p class="hint">Your page design, with the empty product boxes drawn on it. A single page is fine — it gets repeated for the whole catalog.</p>
+      <p class="hint">The page design, with the empty product boxes drawn on it. A single page is fine — it gets repeated for the whole catalog.</p>
     </div>
 
     <div class="row">
@@ -62,40 +102,27 @@
     </div>
 
     <button type="submit" class="btn" id="submitBtn">Generate PDF</button>
-    <div class="startline">
-      <button type="button" class="btn ghost" id="sampleBtn">Try it with the sample files</button>
-      <span class="muted">no files of your own needed</span>
-    </div>
     <div class="bar" id="bar"><i></i></div>
     <div id="status"></div>
   </form>
-{% endblock %}
 
-{% block foot %}
-  <p>Up to {{ max_mb }} MB per upload. New to this? The <a href="{{ prefix }}/guide">guide</a> has downloadable templates.</p>
-{% endblock %}
+  <footer class="foot">
+    <p>Up to {{ max_mb }} MB per upload, {{ max_products }} products per file.</p>
+    <p>Uploaded files and the finished PDF are deleted the moment the download is sent — nothing is stored.</p>
+  </footer>
+</div>
 
-{% block scripts %}
 <script>
-  // The export is posted straight to this app's own origin rather than through
-  // the stuffs.bid rewrite in front of it. A finished catalog can be tens of
-  // megabytes and take over a minute, and a CDN proxy hop is the wrong place
-  // for either. Same-origin visits post to themselves.
-  const ORIGIN = {{ origin | tojson }};
-  const ENDPOINT = ORIGIN + '{{ prefix }}/generate';
-  const SAMPLES = '{{ prefix }}/static/samples';
-
+  const ENDPOINT = '{{ generate_url }}';
   const form = document.getElementById('genForm');
   const btn = document.getElementById('submitBtn');
-  const sampleBtn = document.getElementById('sampleBtn');
   const status = document.getElementById('status');
   const bar = document.getElementById('bar');
   let ticker = null;
 
   function begin(message) {
-    clearInterval(ticker);  // the sample flow calls begin twice: fetch, then export
+    clearInterval(ticker);
     btn.disabled = true;
-    sampleBtn.disabled = true;
     btn.textContent = 'Generating…';
     status.className = '';
     status.style.display = 'block';
@@ -114,7 +141,6 @@
     clearInterval(ticker);
     bar.style.display = 'none';
     btn.disabled = false;
-    sampleBtn.disabled = false;
     btn.textContent = 'Generate PDF';
     status.textContent = text;
     status.className = kind || '';
@@ -131,11 +157,17 @@
     URL.revokeObjectURL(url);
   }
 
-  async function send(data, waitMessage) {
-    begin(waitMessage);
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    const excel = document.getElementById('excel');
+    const template = document.getElementById('template');
+    if (!excel.files.length || !template.files.length) {
+      end('Please choose both a product file and a template PDF.', 'failed');
+      return;
+    }
+    begin('Generating…');
     try {
-      const response = await fetch(ENDPOINT, { method: 'POST', body: data });
-
+      const response = await fetch(ENDPOINT, { method: 'POST', body: new FormData(form) });
       if (!response.ok) {
         let message = 'Export failed (HTTP ' + response.status + ').';
         try {
@@ -145,7 +177,6 @@
         end(message, 'failed');
         return;
       }
-
       const blob = await response.blob();
       const disposition = response.headers.get('Content-Disposition') || '';
       const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/);
@@ -154,35 +185,7 @@
     } catch (networkError) {
       end('Export failed: the connection dropped. Please try again.', 'failed');
     }
-  }
-
-  form.addEventListener('submit', function (event) {
-    event.preventDefault();
-    const excel = document.getElementById('excel');
-    const template = document.getElementById('template');
-    if (!excel.files.length || !template.files.length) {
-      end('Please choose both a product file and a template PDF.', 'failed');
-      return;
-    }
-    send(new FormData(form), 'Generating…');
-  });
-
-  sampleBtn.addEventListener('click', async function () {
-    begin('Fetching the sample files…');
-    try {
-      const [products, template] = await Promise.all([
-        fetch(SAMPLES + '/catalog-products-template.xlsx').then(r => r.blob()),
-        fetch(SAMPLES + '/catalog-template.pdf').then(r => r.blob()),
-      ]);
-      const data = new FormData();
-      data.append('excel', products, 'sample catalog.xlsx');
-      data.append('template', template, 'sample template.pdf');
-      data.append('template_form', 'por-title');
-      data.append('quality', 'normal');
-      await send(data, 'Generating the sample…');
-    } catch (error) {
-      end('Could not load the sample files. Please try again.', 'failed');
-    }
   });
 </script>
-{% endblock %}
+</body>
+</html>

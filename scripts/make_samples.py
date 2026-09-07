@@ -43,7 +43,7 @@ from catalog_exporter import (  # noqa: E402  (path setup has to come first)
     try_font,
 )
 
-SAMPLES = REPO / "web" / "static" / "samples"
+SAMPLES = REPO / "web" / "client_static" / "samples"
 PRODUCTS = SAMPLES / "products"
 
 # The sample template is A4 because that is what someone building their own
@@ -62,7 +62,10 @@ ACCENT = "#E31B23"
 
 # Public URL the sample product file points at. The images are served by this
 # app itself, so the sample works end-to-end without depending on anyone's CDN.
-SAMPLE_IMAGE_BASE = "https://topdf.stuffs.bid/topdf/static/samples/products"
+# The client tool's samples moved out of the public static folder on
+# 2026-09-07 -- they imitate that client's catalog design and must not be
+# reachable from stuffs.bid. They are served on the client host only.
+SAMPLE_IMAGE_BASE = "https://excelpdf.duckdns.org/client-assets/samples/products"
 
 # Invented catalog: 14 rows, so the output spills onto a second page and shows
 # both template page styles being used.

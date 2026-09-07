@@ -1,13 +1,20 @@
-"""Hosted catalog PDF exporter.
+"""Two catalog tools, one process.
 
-Served at **https://stuffs.bid/topdf**, which is a rewrite in front of this
-app's own origin, **https://topdf.stuffs.bid/topdf**. Both URLs render the same
-pages; the browser posts the actual export straight to the origin, because a
-finished catalog is far bigger and far slower than a proxy hop should carry.
-See `URL_PREFIX` below and this project's CLAUDE.md for the why.
+**Public — topdf.** `https://stuffs.bid/topdf` (a Next.js rewrite in front of
+`https://topdf.stuffs.bid/topdf`, which is this app). Five plain-English
+columns, no options, one card design. Its engine is `simple_catalog`.
 
-Everything here is the public-facing wrapper. The engine is `catalog_exporter`,
-which is shared with the command-line entry point and knows nothing about HTTP.
+**Client.** `https://excelpdf.duckdns.org`. The original tool, with the card
+styles, badge designs, quality choice and fixed reference grid that belong to
+one client's catalog. Its engine is `catalog_exporter`, untouched.
+
+The split was made 2026-09-07: the public product had been carrying the
+client's design, sample assets and column vocabulary, which is not ours to
+publish. They now share only this process, the export semaphore and the
+upload validation — the box has 2GB and one export peaks near 350MB, so a
+second service is the thing that must not happen, not a second engine.
+
+Which tool a request gets is decided by its Host header; see `is_client_host`.
 """
 
 from __future__ import annotations
@@ -21,11 +28,21 @@ import time
 import uuid
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, send_file
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    send_from_directory,
+)
 from PIL import Image
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import catalog_exporter
+import simple_catalog
 from catalog_exporter import TEMPLATE_FORM_VARIANTS, export_catalog, get_pdf_page_count
 from web.limits import Busy, ExportSlot, Quota
 from web.security import fetch_remote_image, looks_like_pdf, looks_like_text, looks_like_xlsx
@@ -33,15 +50,20 @@ from web.security import fetch_remote_image, looks_like_pdf, looks_like_text, lo
 APP_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = APP_DIR / "uploads"
 LOG_DIR = APP_DIR / "logs"
+CLIENT_STATIC_DIR = APP_DIR / "web" / "client_static"
 UPLOADS_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 
-# The app lives under a path prefix so the same deployment answers correctly
-# whether it is reached directly or through the stuffs.bid rewrite. This mirrors
-# the `basePath` convention the other showcase zones on that domain use.
+# --- addresses --------------------------------------------------------------
+# The public app lives under a path prefix so the same deployment answers
+# correctly whether it is reached directly or through the stuffs.bid rewrite.
+# This mirrors the `basePath` convention the other showcase zones use.
 URL_PREFIX = "/topdf"
 ORIGIN_URL = os.environ.get("TOPDF_ORIGIN", "https://topdf.stuffs.bid")
-ALLOWED_ORIGINS = {"https://stuffs.bid", ORIGIN_URL}
+PUBLIC_BASE = os.environ.get("TOPDF_PUBLIC_BASE", "https://stuffs.bid")
+CLIENT_HOST = os.environ.get("TOPDF_CLIENT_HOST", "excelpdf.duckdns.org")
+CLIENT_URL = f"https://{CLIENT_HOST}"
+ALLOWED_ORIGINS = {PUBLIC_BASE, ORIGIN_URL, CLIENT_URL}
 
 # --- limits -----------------------------------------------------------------
 # Sized for a 2GB VPS shared with several other services, where one export has
@@ -50,7 +72,10 @@ MAX_CONTENT_LENGTH = 30 * 1024 * 1024
 MAX_TEMPLATE_PAGES = 12
 MAX_PRODUCTS = 400
 SNIFF_BYTES = 8192
-QUOTA_WINDOWS = {"hourly": (6, 3600), "daily": (25, 86400)}
+# Strangers get a tight allowance; the client host is one person doing a known
+# weekly job and should never meet a quota wall mid-catalog.
+PUBLIC_QUOTA_WINDOWS = {"hourly": (6, 3600), "daily": (25, 86400)}
+CLIENT_QUOTA_WINDOWS = {"hourly": (30, 3600), "daily": (120, 86400)}
 
 JOB_MAX_AGE_SECONDS = 3600
 IMAGE_CACHE_MAX_BYTES = 300 * 1024 * 1024
@@ -84,7 +109,9 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 # forwarding headers on every request, so exactly one hop is trusted.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=0)
 
-quota = Quota(LOG_DIR / "quota.sqlite3", QUOTA_WINDOWS)
+public_quota = Quota(LOG_DIR / "quota.sqlite3", PUBLIC_QUOTA_WINDOWS)
+client_quota = Quota(LOG_DIR / "quota.sqlite3", CLIENT_QUOTA_WINDOWS)
+
 usage_log = logging.getLogger("topdf.usage")
 usage_log.setLevel(logging.INFO)
 usage_log.propagate = False
@@ -93,11 +120,17 @@ _usage_handler.setFormatter(logging.Formatter("%(message)s"))
 usage_log.addHandler(_usage_handler)
 
 
+def is_client_host() -> bool:
+    """True when this request arrived on the client tool's own hostname."""
+    return request.host.split(":")[0].lower() == CLIENT_HOST
+
+
 def record_usage(**fields: object) -> None:
     """One line per export attempt. No IPs, no filenames, no file contents.
 
-    This exists to answer one question -- does anyone actually use this -- and
-    is deliberately too thin to answer any other.
+    This exists to answer one question -- does anyone actually use the public
+    tool -- and is deliberately too thin to answer any other. `app` separates
+    the two tools so client runs never look like demand.
     """
     fields["ts"] = round(time.time())
     usage_log.info(json.dumps(fields, separators=(",", ":")))
@@ -166,9 +199,14 @@ def add_common_headers(response: Response) -> Response:
         response.headers["Vary"] = "Origin"
         # Without this the page cannot read the filename off the download.
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
-    # stuffs.bid also hosts private tooling; nothing on this domain is offered
-    # to search engines, consistent with the other showcase zones there.
-    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    # The public pages are indexable on purpose — the tool is published to find
+    # out whether anyone outside one client wants it, and a page search engines
+    # may not read cannot answer that. The client host is not: it is one
+    # person's working tool and has no reason to be in an index. Duplicate
+    # content between this origin and stuffs.bid is handled by the canonical
+    # tag plus this origin's robots.txt, not by hiding the pages.
+    if is_client_host():
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     return response
@@ -180,13 +218,15 @@ def too_large(_error: object) -> tuple[Response, int]:
     return jsonify(error=f"Those files add up to more than {limit_mb} MB. Please upload smaller files."), 413
 
 
-@app.route("/", methods=["GET"])
-def root() -> Response:
-    return redirect(URL_PREFIX, code=302)
-
-
 @app.route("/robots.txt", methods=["GET"])
 def robots() -> Response:
+    """Keep both of *this app's* hostnames out of search results.
+
+    The public pages are indexable at `https://stuffs.bid/topdf`, which is a
+    different hostname serving the identical HTML through a rewrite. A crawler
+    only reads this file if it reached `topdf.stuffs.bid` or the client host
+    directly, and the right answer at either is "not here."
+    """
     return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
 
 
@@ -195,28 +235,67 @@ def healthz() -> Response:
     return jsonify(ok=True)
 
 
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
+
+@app.route("/", methods=["GET"])
+def root() -> Response | str:
+    if not is_client_host():
+        return redirect(URL_PREFIX, code=302)
+    sweep_old_jobs()
+    return render_template(
+        "client.html",
+        template_forms=TEMPLATE_FORM_CHOICES,
+        generate_url=f"{CLIENT_URL}/generate",
+        max_products=MAX_PRODUCTS,
+        max_mb=MAX_CONTENT_LENGTH // (1024 * 1024),
+    )
+
+
+@app.route("/client-assets/<path:filename>", methods=["GET"])
+def client_assets(filename: str) -> Response:
+    """The client tool's own sample files, served only on the client host.
+
+    They imitate that client's catalog design, so they must not be reachable
+    from any public URL — which is why they live outside the app's static
+    folder rather than being served from it with a different prefix.
+    """
+    if not is_client_host():
+        return Response("Not found", status=404)
+    return send_from_directory(CLIENT_STATIC_DIR, filename)
+
+
 # Registered without the trailing slash, and matching both forms, because the
 # Next.js rewrite in front of this normalises `/topdf/` to `/topdf`. A Flask
 # rule written as `/topdf/` would redirect that straight back -- an infinite
 # loop, and one whose Location header leaks this origin's hostname into the
 # visitor's address bar.
 @app.route(URL_PREFIX, methods=["GET"], strict_slashes=False)
-def index() -> str:
+def index() -> Response | str:
+    if is_client_host():
+        return redirect("/", code=302)
     sweep_old_jobs()
     return render_template(
-        "tool.html",
-        template_forms=TEMPLATE_FORM_CHOICES,
+        "landing.html",
         origin=ORIGIN_URL,
         prefix=URL_PREFIX,
+        public_base=PUBLIC_BASE,
+        canonical=f"{PUBLIC_BASE}{URL_PREFIX}",
+        max_products=MAX_PRODUCTS,
         max_mb=MAX_CONTENT_LENGTH // (1024 * 1024),
     )
 
 
 @app.route(f"{URL_PREFIX}/guide", methods=["GET"])
-def guide() -> str:
+def guide() -> Response | str:
+    if is_client_host():
+        return redirect("/", code=302)
     return render_template(
         "guide.html",
         prefix=URL_PREFIX,
+        public_base=PUBLIC_BASE,
+        canonical=f"{PUBLIC_BASE}{URL_PREFIX}/guide",
         max_products=MAX_PRODUCTS,
         max_template_pages=MAX_TEMPLATE_PAGES,
         max_mb=MAX_CONTENT_LENGTH // (1024 * 1024),
@@ -257,36 +336,35 @@ def validated_upload(field: str, allowed_suffixes: tuple[str, ...], label: str) 
     return uploaded, suffix, head
 
 
-@app.route(f"{URL_PREFIX}/generate", methods=["POST", "OPTIONS"])
-def generate() -> Response | tuple[Response, int]:
-    if request.method == "OPTIONS":
-        response = Response(status=204)
-        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        response.headers["Access-Control-Max-Age"] = "86400"
-        return response
+def preflight_response() -> Response:
+    response = Response(status=204)
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    return response
 
+
+def run_export(*, tool: str, run) -> Response | tuple[Response, int]:
+    """Everything both tools do around the export itself.
+
+    `run(excel_path, template_path, output_path)` is the only difference
+    between them, and it is where the two engines diverge completely.
+    """
     started = time.monotonic()
-    quality = request.form.get("quality", "normal")
-    template_form = request.form.get("template_form", "auto")
 
     try:
-        if quality not in QUALITY_CHOICES:
-            raise RejectedUpload("Unknown quality setting.")
-        if template_form not in TEMPLATE_FORM_CHOICES:
-            raise RejectedUpload("Unknown template form.")
-
         excel_file, excel_suffix, _ = validated_upload(
             "excel", (".xlsx", ".csv"), "product file (.xlsx or .csv)"
         )
         template_file, _, _ = validated_upload("template", (".pdf",), "template PDF")
     except RejectedUpload as rejection:
-        record_usage(ok=False, reason="rejected", ms=round((time.monotonic() - started) * 1000))
+        record_usage(tool=tool, ok=False, reason="rejected", ms=round((time.monotonic() - started) * 1000))
         return jsonify(error=str(rejection)), 400
 
-    allowed, message = quota.check_and_record(quota.subject(request.remote_addr), "generate")
+    quota = client_quota if tool == "client" else public_quota
+    allowed, message = quota.check_and_record(quota.subject(request.remote_addr), f"generate:{tool}")
     if not allowed:
-        record_usage(ok=False, reason="quota")
+        record_usage(tool=tool, ok=False, reason="quota")
         return jsonify(error=message), 429
 
     sweep_old_jobs()
@@ -319,23 +397,17 @@ def generate() -> Response | tuple[Response, int]:
 
         try:
             with ExportSlot():
-                export_catalog(
-                    excel_path=excel_path,
-                    template_pdf=template_path,
-                    output_path=output_path,
-                    quality=quality,
-                    template_form=template_form,
-                )
+                run(excel_path, template_path, output_path)
         except Busy:
-            record_usage(ok=False, reason="busy")
+            record_usage(tool=tool, ok=False, reason="busy")
             return jsonify(
                 error="Someone else's catalog is generating right now. Please try again in a minute."
             ), 503
         except ValueError as invalid:
-            # The engine raises ValueError for the things the uploader can
-            # actually fix -- missing columns, an unusable template -- and its
+            # Both engines raise ValueError for the things the uploader can
+            # actually fix -- missing columns, an unusable template -- and the
             # wording is already aimed at them.
-            record_usage(ok=False, reason="invalid_input", ms=round((time.monotonic() - started) * 1000))
+            record_usage(tool=tool, ok=False, reason="invalid_input", ms=round((time.monotonic() - started) * 1000))
             return jsonify(error=str(invalid)), 400
         except Exception:
             # Anything else is a bug or a broken file, and its text can carry
@@ -343,11 +415,11 @@ def generate() -> Response | tuple[Response, int]:
             # journal, where only the operator can read it.
             reference = job_id[:8]
             app.logger.exception("export failed (ref %s)", reference)
-            record_usage(ok=False, reason="error", ms=round((time.monotonic() - started) * 1000))
+            record_usage(tool=tool, ok=False, reason="error", ms=round((time.monotonic() - started) * 1000))
             return jsonify(
                 error=(
                     "The export failed on this file. If the product file and template both match "
-                    f"the Guide, this is a bug — quote reference {reference}."
+                    f"the guide, this is a bug — quote reference {reference}."
                 )
             ), 500
 
@@ -358,15 +430,13 @@ def generate() -> Response | tuple[Response, int]:
         # request, and there is no window where a crash leaves it on disk.
         shutil.rmtree(job_dir, ignore_errors=True)
 
-    elapsed_ms = round((time.monotonic() - started) * 1000)
     record_usage(
+        tool=tool,
         ok=True,
-        ms=elapsed_ms,
-        quality=quality,
-        form=template_form,
+        ms=round((time.monotonic() - started) * 1000),
         template_pages=page_count,
         out_kb=round(len(payload) / 1024),
-        via="proxy" if request.headers.get("Origin") == "https://stuffs.bid" else "direct",
+        via="proxy" if request.headers.get("Origin") == PUBLIC_BASE else "direct",
     )
     return send_file(
         io.BytesIO(payload),
@@ -374,6 +444,52 @@ def generate() -> Response | tuple[Response, int]:
         as_attachment=True,
         download_name=download_name,
     )
+
+
+@app.route(f"{URL_PREFIX}/generate", methods=["POST", "OPTIONS"])
+def generate_public() -> Response | tuple[Response, int]:
+    """topdf's export. No options: one card design, one quality."""
+    if request.method == "OPTIONS":
+        return preflight_response()
+    if is_client_host():
+        return jsonify(error="Not found."), 404
+
+    def run(excel_path: Path, template_path: Path, output_path: Path) -> None:
+        simple_catalog.export_catalog(
+            excel_path=excel_path,
+            template_pdf=template_path,
+            output_path=output_path,
+            max_products=MAX_PRODUCTS,
+        )
+
+    return run_export(tool="topdf", run=run)
+
+
+@app.route("/generate", methods=["POST", "OPTIONS"])
+def generate_client() -> Response | tuple[Response, int]:
+    """The client tool's export, with its card styles and quality choice."""
+    if request.method == "OPTIONS":
+        return preflight_response()
+    if not is_client_host():
+        return jsonify(error="Not found."), 404
+
+    quality = request.form.get("quality", "normal")
+    template_form = request.form.get("template_form", "auto")
+    if quality not in QUALITY_CHOICES:
+        return jsonify(error="Unknown quality setting."), 400
+    if template_form not in TEMPLATE_FORM_CHOICES:
+        return jsonify(error="Unknown template form."), 400
+
+    def run(excel_path: Path, template_path: Path, output_path: Path) -> None:
+        export_catalog(
+            excel_path=excel_path,
+            template_pdf=template_path,
+            output_path=output_path,
+            quality=quality,
+            template_form=template_form,
+        )
+
+    return run_export(tool="client", run=run)
 
 
 if __name__ == "__main__":
