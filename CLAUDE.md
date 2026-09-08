@@ -298,10 +298,17 @@ sweep of every `src`/`href` for non-200s) — each of these is invisible in a sc
 repeated"*, and readers could not tell which picture was input and which was output. Eight images
 on screen at once, and the jargon named the mechanism rather than the outcome.
 
-It is now one carousel with three slides, each the same shape: **You give → You get**. The
+It is now one carousel with **two** slides, each the same shape: **You give → You get**. The
 repetition is the teaching device, and only one pair is on screen at a time, so the eye compares
 two things instead of eight. Slide 1 is the Shopify path — its "give" is a mock of the hero's own
-address field, because the input is a URL and there is no picture of one.
+address field, because the input is a URL and there is no picture of one. Slide 2 is the upload
+path.
+
+It shipped with three, and a cover-page slide was cut: it showed the same mechanism as slide 2
+(a template with empty boxes, filled) and reading them in sequence made the section drag rather
+than clarify. The point survives as a sentence in slide 2's caption, which is where a variation on
+a mechanism belongs once the mechanism is shown. The two slides that remain are the two *decisions*
+a visitor actually makes — paste an address, or bring your own design.
 
 No library: three slides in a flex track, one `translateX`, dots built from the slide list. Details
 that are not obvious:
