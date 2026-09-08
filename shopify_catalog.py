@@ -39,13 +39,15 @@ import io
 import json
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
@@ -460,16 +462,73 @@ def _address_from_meta(meta: dict) -> str:
     return ", ".join(str(part) for part in parts if part)
 
 
-def currency_symbol(meta: dict) -> str:
-    """The store's own currency mark, if the exporter can print it.
+# ISO code first, because `money_format` is free text the shop can write any
+# way it likes. Metrixplus Instruments writes "Rs. {{amount}}", which is not a
+# symbol `simple_catalog` recognises -- so the price fell through to that
+# module's £ default and an Indian store's catalog quoted pounds. Guessing the
+# wrong currency is far worse than printing none.
+CURRENCY_BY_CODE = {
+    "INR": "₹", "USD": "$", "GBP": "£", "EUR": "€", "JPY": "¥", "CNY": "¥",
+    "KRW": "₩", "RUB": "₽", "ILS": "₪", "AUD": "$", "CAD": "$", "NZD": "$",
+    "SGD": "$", "HKD": "$", "MXN": "$", "BRL": "$", "PHP": "₱", "VND": "₫",
+    "THB": "฿", "TRY": "₺", "NGN": "₦", "UAH": "₴", "PLN": "zł", "SEK": "kr",
+    "NOK": "kr", "DKK": "kr", "CHF": "CHF ", "ZAR": "R", "AED": "AED ",
+}
 
-    `money_format` arrives as something like `${{amount}}` or `&pound;{{amount}}`.
-    `simple_catalog.format_price` keeps a leading symbol only when it recognises
-    it, so anything else (`CHF`, `kr`) is dropped rather than mangled.
+
+# What to print when the card font has no glyph for the symbol. These are the
+# forms the shops themselves use -- Metrixplus's own `money_format` is
+# "Rs. {{amount}}" -- so the fallback is the store's own wording, not ours.
+CURRENCY_TEXT_FALLBACK = {"₹": "Rs. ", "₱": "PHP ", "₫": "VND ", "₴": "UAH ", "₺": "TRY ", "₦": "NGN "}
+
+
+@lru_cache(maxsize=32)
+def _font_can_render(character: str) -> bool:
+    """Does the card font actually have a glyph for this character?
+
+    Worth checking rather than assuming. The prices on a Metrixplus catalog
+    came out as ₹-shaped tofu boxes: the data was right and Liberation Sans,
+    which is what `try_font` finds on this box, simply has no U+20B9. Swapping
+    the font would change the typography of every catalog the tool has ever
+    made, and `try_font` belongs to the client engine besides -- so the text
+    falls back instead.
+
+    Detected by drawing: a missing glyph renders as .notdef, which is exactly
+    what an unassigned codepoint renders as.
     """
-    raw = html_module.unescape(str(meta.get("money_format") or ""))
-    lead = raw.split("{{")[0].strip()
-    return lead if lead and lead in "£$€¥₹₽₩₪" else ""
+    from catalog_exporter import try_font
+
+    font = try_font(40)
+    if not isinstance(font, ImageFont.FreeTypeFont):
+        return character.isascii()  # the bitmap fallback font has nothing exotic
+
+    def bitmap(text: str) -> bytes:
+        canvas = Image.new("L", (72, 72), 255)
+        ImageDraw.Draw(canvas).text((6, 6), text, font=font, fill=0)
+        return canvas.tobytes()
+
+    return bitmap(character) not in (bitmap("￿"), bitmap(" "))
+
+
+def currency_symbol(meta: dict) -> str:
+    """The store's own currency mark, as something the card can print.
+
+    Returns "" rather than a guess when the currency cannot be identified: a
+    bare number reads as "ask us", whereas the wrong symbol is a false claim
+    about the price.
+    """
+    code = str(meta.get("currency") or "").strip().upper()
+    if code in CURRENCY_BY_CODE:
+        symbol = CURRENCY_BY_CODE[code]
+        if len(symbol.strip()) == 1 and not _font_can_render(symbol.strip()):
+            return CURRENCY_TEXT_FALLBACK.get(symbol.strip(), f"{code} ")
+        return symbol
+
+    # Fall back to whatever `money_format` puts in front of the amount, but
+    # only when it is a single recognised symbol -- `format_price` keeps a
+    # leading character only if it is one of those.
+    lead = html_module.unescape(str(meta.get("money_format") or "")).split("{{")[0].strip()
+    return lead if lead in "£$€¥₹₽₩₪" else ""
 
 
 def read_brand(
@@ -580,14 +639,35 @@ def _plain_text(raw_html: str) -> str:
     return re.sub(r"\s+", " ", html_module.unescape(text)).strip()
 
 
+# Section headings that a shop's description opens with. Flattening the HTML
+# turns them into the first words of the card: every Metrixplus product read
+# "Product Overview Deliver absolute accuracy..." until these were stripped.
+BOILERPLATE_OPENERS = re.compile(
+    r"^\s*(product\s+)?(overview|description|details|features|highlights|"
+    r"technical\s+specifications?|specifications?|specs|about(\s+this\s+(item|product))?)"
+    r"\s*[:\-–—]?\s*",
+    re.I,
+)
+
+
 def short_description(product: dict) -> str:
     """A card-sized line, in the store's own words.
 
-    The store already wrote a description; the only problem is length. Taking
-    its first sentence and cutting on a word boundary keeps the shop's voice,
-    which reads better on a catalog card than a paraphrase would.
+    The store already wrote a description; the only problems are length and
+    furniture. Prefer the first real paragraph -- flattening the whole
+    `body_html` sweeps `<h2>Product Overview</h2>` into the sentence -- then
+    strip a leading heading if one survived, and cut on a word boundary. Using
+    the shop's own sentence keeps its voice, which reads better on a card than
+    a paraphrase would.
     """
-    text = _plain_text(product.get("body_html") or "")
+    # Flatten, then drop a boilerplate opener. Preferring the first <p> was
+    # tried and was wrong in both directions: Death Wish Coffee's tagline is an
+    # <h4> ("Keep it under wraps.") and is the best line on the card, while
+    # Metrixplus's <h2> is furniture ("Product Overview"). What separates them
+    # is whether the heading *says* anything, not which tag it is -- so strip
+    # the known-empty openers and keep whatever the shop actually wrote first.
+    text = BOILERPLATE_OPENERS.sub("", _plain_text(product.get("body_html") or "")).strip()
+
     if not text:
         return str(product.get("product_type") or "").strip()
 
@@ -927,7 +1007,12 @@ def detected_boxes(path: Path) -> list[int]:
 IMAGE_FETCH_WORKERS = 12
 
 
-def prefetch_images(urls: list[str], *, progress: Callable[[int, int], None] | None = None) -> None:
+def prefetch_images(
+    urls: list[str],
+    *,
+    progress: Callable[[int, int], None] | None = None,
+    deadline: float | None = None,
+) -> None:
     """Warm the exporter's on-disk image cache in parallel, before the render loop.
 
     Deliberately a *prewarm* rather than a rewrite of the drawing code: the
@@ -957,6 +1042,12 @@ def prefetch_images(urls: list[str], *, progress: Callable[[int, int], None] | N
     def fetch(url: str) -> None:
         target = cache_path_for_source(url)
         if target.exists():
+            return
+        # Past the deadline the remaining downloads are abandoned rather than
+        # cancelled: each is a blocking socket read of up to 12s, so the pool
+        # drains far faster by letting queued tasks return immediately. Those
+        # products keep their card and lose only the photo.
+        if deadline is not None and time.monotonic() > deadline:
             return
         data = fetcher(url)
         if not data:
@@ -1001,31 +1092,53 @@ def build_catalog(
     output_path: Path,
     max_products: int = DEFAULT_MAX_PRODUCTS,
     refine: Callable[[dict], dict] | None = None,
+    budget_seconds: float | None = None,
     status_callback: Callable[[str], None] | None = None,
 ) -> CatalogResult:
-    """Store URL in, catalog PDF out."""
+    """Store URL in, catalog PDF out.
+
+    `budget_seconds` is a wall-clock ceiling the build enforces on itself. The
+    run is synchronous, so without one the only limit is gunicorn's 300s, and
+    reaching *that* kills the worker mid-request and gives the visitor a
+    dropped connection with no explanation -- exactly the failure this whole
+    round started with. Checked between phases and once a page, so a slow store
+    stops with a sentence it can act on instead of being cut off.
+    """
     from simple_catalog import export_catalog
+
+    started = time.monotonic()
 
     def say(message: str) -> None:
         if status_callback:
             status_callback(message)
+
+    def check_budget(stage: str) -> None:
+        if budget_seconds is None or time.monotonic() - started < budget_seconds:
+            return
+        raise StoreError(
+            f"That store is taking too long to read ({stage} was still running after "
+            f"{round(budget_seconds)}s). Stores with very large catalogs or slow image hosting "
+            f"can exceed what this tool does in one request."
+        )
 
     origin = normalize_store_url(store_url)
     domain = urlsplit(origin).hostname or ""
 
     say("Reading the store...")
     store = fetch_store(origin, max_products=max_products)
+    check_budget("reading the product list")
 
     say("Picking out the products...")
     rows = product_rows(store.products, symbol=currency_symbol(store.meta), limit=max_products)
     if not rows:
         raise StoreError(
             "None of that store's published items look like catalog products — they had no photo, "
-            "no price, or nothing that ships."
+            "or nothing that ships."
         )
 
     say("Working out the branding...")
     brand = read_brand(store, refine=refine)
+    check_budget("working out the branding")
 
     say("Drawing a template in the store's colours...")
     template = work_dir / "template.pdf"
@@ -1037,7 +1150,9 @@ def build_catalog(
     prefetch_images(
         [row[0] for row in rows],
         progress=lambda done, total: say(f"Fetching product photos... {done} of {total}"),
+        deadline=None if budget_seconds is None else started + budget_seconds,
     )
+    check_budget("fetching the product photos")
 
     export_catalog(
         excel_path=product_file,
@@ -1047,6 +1162,7 @@ def build_catalog(
         known_boxes=boxes,
         page_sources=sources,
         status_callback=status_callback,
+        progress_callback=lambda page, total: check_budget(f"laying out page {page} of {total}"),
     )
 
     return CatalogResult(

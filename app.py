@@ -79,11 +79,18 @@ ALLOWED_ORIGINS = {PUBLIC_BASE, ORIGIN_URL, CLIENT_URL}
 MAX_CONTENT_LENGTH = 30 * 1024 * 1024
 MAX_TEMPLATE_PAGES = 12
 MAX_PRODUCTS = 400
-# The Shopify path is bounded by wall-clock, not by page count: every product
-# is one image download from a CDN this box has no cache of, and the whole
-# thing is synchronous behind a single export slot. Measured at roughly two
-# seconds a product cold, so 36 is about a minute and three pages.
-SHOPIFY_MAX_PRODUCTS = 36
+# The Shopify path is bounded by wall-clock, not by page count. Photos are now
+# fetched twelve at a time and template pages are rendered once per design
+# rather than once per page, which measured 999 products at 135s and 168MB —
+# so the cap is a choice about how long one visitor may hold the single export
+# slot, not about what the machine can do.
+SHOPIFY_MAX_PRODUCTS = 250
+
+# The build enforces this on itself, between phases and once a page. It has to
+# sit clearly below gunicorn's 300s: reaching *that* kills the worker mid-request
+# and the visitor gets a dropped connection with no explanation, which is the
+# exact failure this route shipped with. nginx allows 300s for these two routes.
+SHOPIFY_BUDGET_SECONDS = 240
 SNIFF_BYTES = 8192
 # Strangers get a tight allowance; the client host is one person doing a known
 # weekly job and should never meet a quota wall mid-catalog.
@@ -521,6 +528,7 @@ def generate_from_shopify() -> Response | tuple[Response, int]:
                     work_dir=job_dir,
                     output_path=output_path,
                     max_products=SHOPIFY_MAX_PRODUCTS,
+                    budget_seconds=SHOPIFY_BUDGET_SECONDS,
                     refine=brand_refiner.refine if brand_refiner.available() else None,
                 )
         except Busy:

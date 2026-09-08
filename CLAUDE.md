@@ -207,9 +207,46 @@ Each silently removed real products, which is worse than failing:
   card. Tentree's 999 real products are 371 distinct titles. Deduped on normalised title, which
   leaves shops that put the colour *in* the title (Allbirds) untouched.
 
-**Bounds.** `SHOPIFY_MAX_PRODUCTS = 36` is a wall-clock decision, not a layout one: every product
-is one cold CDN download, the whole run is synchronous behind the same single export slot, and 36
-measures at 35–40s over three pages. Product images are requested at `?width=700` and the logo at
+### Three more the artifact showed, that the data did not
+
+Reading a generated catalog as an outsider — not the diff, not the logs:
+
+- **Prices on an Indian store printed as £.** `money_format` is `Rs. {{amount}}`, which is not a
+  symbol `simple_catalog.format_price` recognises, so it fell through to that module's `£`
+  default. Currency now resolves from the **ISO code** in `meta.json` (`CURRENCY_BY_CODE`), and
+  an unknown one prints nothing rather than guessing: a bare number reads as "ask us", the wrong
+  symbol is a false claim about the price.
+- **Then ₹ rendered as a tofu box.** Liberation Sans, which is what `try_font` finds on this box,
+  has no U+20B9. `_font_can_render()` draws the character and compares it against `.notdef`, and
+  an unrenderable symbol falls back to the shop's own wording (`Rs. `). Swapping the card font
+  would have changed the typography of every catalog ever made here, and `try_font` is the client
+  engine's besides.
+- **Every Metrixplus description began "Product Overview".** That is an `<h2>` being flattened
+  into the sentence. `BOILERPLATE_OPENERS` strips a leading heading. Preferring the first `<p>`
+  was tried first and was wrong in the other direction — Death Wish Coffee's tagline is an `<h4>`
+  ("Keep it under wraps.") and is the best line on the card. What separates them is whether the
+  heading *says* anything, not which tag it is.
+
+### Bounds
+
+**`SHOPIFY_MAX_PRODUCTS = 250`**, with **`SHOPIFY_BUDGET_SECONDS = 240`** enforced by the build on
+itself between phases and once a page. The cap is a choice about how long one visitor may hold the
+single export slot, not about what the machine can do — 250 products measures at 28s and 999 at
+135s. The budget matters because the run is synchronous: without it the only limit is gunicorn's
+300s, and reaching *that* kills the worker mid-request and gives a dropped connection with no
+explanation, which is the exact failure this route shipped with. Past the deadline `prefetch_images`
+abandons the remaining downloads rather than cancelling them — each is a blocking socket read of up
+to 12s, so the pool drains far faster — and those products keep their card and lose only the photo.
+
+**Deliberately still synchronous** (decided 2026-09-08). A job model was scoped and declined: it
+would mean holding finished PDFs on disk for the browser to collect, and "nothing is retained" is
+a promise the page makes. As it stands the job directory is deleted in the request's own `finally`
+and that promise is literally true. The cost is that one build blocks others for up to ~40s and
+there is no progress reporting. If that becomes the complaint, the answer is a job model with an
+explicit retention line on the page — not a bigger timeout.
+
+The old wall-clock note, for reference: every product is one cold CDN download, and before the
+concurrency and memory work 36 products took 62s over three pages. Product images are requested at `?width=700` and the logo at
 600, which is the single biggest saving in the run. Same public quota as the upload path; usage
 logs as `tool="topdf-shopify"` so this demand signal stays separable from the other two tools.
 
