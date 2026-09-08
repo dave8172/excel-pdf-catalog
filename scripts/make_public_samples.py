@@ -289,6 +289,58 @@ def write_output_preview(template: Path, stem: str, pages: int) -> None:
     output.unlink(missing_ok=True)
 
 
+def write_hero_shot() -> None:
+    """The picture at the top of the landing page.
+
+    Separate from the before/after samples on purpose. Those show the *upload*
+    flow, so their brand bar reads "YOUR LOGO HERE" -- correct there, because
+    the blank template beside them is the thing you download and put your own
+    logo on. In the hero it was wrong twice over: the headline sells the
+    Shopify flow, and a placeholder logo is the single clearest sign that a
+    page is a demo rather than a product.
+
+    So this one is built by `shopify_catalog`'s own template generator, with a
+    brand profile standing in for a store's. The hero then shows exactly what
+    the paste-a-URL path produces -- including that the shop name is typeset
+    when no logo image is available, which is a real outcome of that path.
+
+    The shop is invented. Publishing a real store's catalog as our own
+    marketing is not ours to do, however good it looks.
+    """
+    import shopify_catalog
+    from simple_catalog import export_catalog as export_public
+
+    brand = shopify_catalog.BrandProfile(
+        name="Northgate Supply Co.",
+        tagline="Workshop and site consumables, trade only",
+        address="Sheffield, United Kingdom",
+        primary="#123B47",
+        secondary="#2E8B93",
+    )
+
+    template = SAMPLES / "_hero-template.pdf"
+    output = SAMPLES / "_hero-export.pdf"
+    boxes, sources = shopify_catalog.build_template(
+        brand, "northgatesupply.example", template, len(SAMPLE_PRODUCTS)
+    )
+    export_public(
+        excel_path=SAMPLES / "products-template.xlsx",
+        template_pdf=template,
+        output_path=output,
+        max_products=400,
+        known_boxes=boxes,
+        page_sources=sources,
+    )
+    rendered = render_pdf_page(output, 1, dpi=112)
+    try:
+        rendered.save(SAMPLES / "hero-export.png", "PNG", optimize=True)
+    finally:
+        rendered.close()
+    template.unlink(missing_ok=True)
+    output.unlink(missing_ok=True)
+    print("  wrote hero-export.png")
+
+
 def main() -> None:
     SAMPLES.mkdir(parents=True, exist_ok=True)
     PHOTOS.mkdir(parents=True, exist_ok=True)
@@ -318,6 +370,9 @@ def main() -> None:
     print("Exporting the samples for real...")
     write_output_preview(one_page, "example-one-page", 1)
     write_output_preview(two_page, "example-two-page", 2)
+
+    print("Building the hero shot from the Shopify template generator...")
+    write_hero_shot()
 
     print("Done.")
 

@@ -4,172 +4,305 @@
 
 {% block head %}
 <style>
-  /* --- hero --------------------------------------------------------------- */
-  /* Two columns on a desktop: the claim on the left, and the thing it claims
-     to make on the right. Below 860px the picture falls under the words. */
+  /* --- hero ----------------------------------------------------------------
+     The store-address field IS the hero. Everything measured on this page says
+     the paste-a-URL path is the one that works, so it is the first interactive
+     thing a stranger meets — not a button that scrolls to a form further down,
+     which is what shipped first and read as "the tool is somewhere else". */
   .hero {
-    display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
-    gap: 42px; align-items: center; padding: 10px 0 4px;
+    display: grid; grid-template-columns: minmax(0, 1.06fr) minmax(0, 0.94fr);
+    gap: 48px; align-items: center; padding: 30px 0 12px;
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px; margin: 0 0 18px;
+    padding: 6px 13px 6px 9px; border-radius: 999px;
+    border: 1px solid var(--line); background: rgba(255, 255, 255, 0.028);
+    color: var(--muted); font-size: 0.8rem; letter-spacing: 0.01em;
+  }
+  .eyebrow .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--good);
+    box-shadow: 0 0 0 3px rgba(122, 212, 140, 0.16);
   }
   .hero h1 {
-    font-size: clamp(1.75rem, 5.2vw, 2.6rem); line-height: 1.14;
-    letter-spacing: -0.03em; margin: 0 0 14px;
+    font-size: clamp(2rem, 5.4vw, 3.1rem); line-height: 1.08;
+    letter-spacing: -0.035em; margin: 0 0 16px; font-weight: 700;
   }
-  .hero .lead { font-size: 1.05rem; color: #cfd3d8; margin: 0 0 8px; }
-  .hero .lead strong { color: var(--text); }
-  .hero .lead.soft { font-size: 0.95rem; color: var(--muted); }
-  .hero-shot { margin: 0; min-width: 0; }
+  .hero h1 .grad {
+    background: linear-gradient(115deg, var(--accent) 10%, var(--accent-2) 90%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero .lead { font-size: 1.06rem; color: #c3c9d2; margin: 0 0 26px; max-width: 46ch; }
+
+  /* The paster itself. Deliberately the loudest object above the fold. */
+  .paster { margin: 0 0 14px; }
+  .paster .row {
+    display: flex; gap: 9px; align-items: stretch; padding: 7px;
+    border-radius: 16px; border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+    box-shadow: var(--shadow);
+    transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  .paster .row:focus-within {
+    border-color: rgba(79, 124, 255, 0.62);
+    box-shadow: var(--shadow), 0 0 0 4px var(--accent-dim);
+  }
+  .paster .field-wrap { position: relative; flex: 1 1 220px; min-width: 0; display: flex; align-items: center; }
+  .paster .globe {
+    position: absolute; left: 13px; width: 16px; height: 16px; opacity: .5;
+    pointer-events: none; flex: 0 0 auto;
+  }
+  .paster input {
+    width: 100%; padding: 14px 12px 14px 38px; border: 0; background: transparent;
+    color: var(--text); font: inherit; font-size: 1.02rem; border-radius: 11px;
+  }
+  .paster input::placeholder { color: #6d7481; }
+  .paster input:focus { outline: none; }
+  .paster .btn { flex: 0 0 auto; white-space: nowrap; padding: 14px 22px; }
+  .paster .under {
+    display: flex; gap: 8px 18px; flex-wrap: wrap; align-items: center;
+    margin: 12px 2px 0; color: var(--muted); font-size: 0.85rem;
+  }
+  .paster .under button {
+    background: none; border: 0; padding: 0; font: inherit; font-size: 0.85rem;
+    color: var(--accent); cursor: pointer; text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .paster .under button:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+
+  .trust { display: flex; gap: 8px 18px; flex-wrap: wrap; margin: 22px 0 0; padding: 0; list-style: none; }
+  .trust li { color: var(--muted); font-size: 0.85rem; display: flex; align-items: center; gap: 6px; }
+  .trust li::before { content: "✓"; color: var(--good); font-size: 0.8rem; }
+
+  /* The shot leans, so the hero has depth rather than two flat columns. */
+  .hero-shot { margin: 0; min-width: 0; position: relative; }
   .hero-shot img {
-    display: block; width: 100%; height: auto; border-radius: 10px;
+    display: block; width: 100%; height: auto; border-radius: 12px;
     border: 1px solid var(--line); background: #fff;
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 28px 60px rgba(0, 0, 0, 0.55);
+    transform: perspective(1400px) rotateY(-7deg) rotateX(2deg) scale(1.01);
+    transition: transform .5s cubic-bezier(.2, .7, .3, 1);
   }
-  .hero-shot figcaption { color: var(--muted); font-size: 0.82rem; margin-top: 10px; }
-  @media (max-width: 860px) {
-    .hero { grid-template-columns: 1fr; gap: 26px; }
+  .hero-shot:hover img { transform: perspective(1400px) rotateY(-2deg) rotateX(0) scale(1.02); }
+  .hero-shot figcaption { color: var(--muted); font-size: 0.8rem; margin-top: 14px; text-align: center; }
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; gap: 30px; padding-top: 26px; }
+    .hero-shot img { transform: none; }
+    .hero-shot { order: 2; }
   }
-  .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 22px 0 6px; }
-  .cta .btn { padding: 15px 22px; }
-  .trust { display: flex; gap: 8px 20px; flex-wrap: wrap; margin: 16px 0 0; padding: 0; list-style: none; }
-  .trust li { color: var(--muted); font-size: 0.86rem; }
-  .trust li::before { content: "✓ "; color: var(--good); }
 
-  /* --- generic section ---------------------------------------------------- */
-  section { margin-top: 52px; }
-  section > h2 { margin-top: 0; }
-  .lede { color: #cfd3d8; max-width: 64ch; }
+  /* --- section rhythm -------------------------------------------------------
+     The first version ran every block together at one margin and read as one
+     long column of text. Sections now get real air, a hairline that fades in
+     from nothing, and a two-part heading so the eye has somewhere to land. */
+  section { margin-top: 104px; scroll-margin-top: 78px; }
+  section.ruled { padding-top: 104px; margin-top: 0; position: relative; }
+  section.ruled::before {
+    content: ""; position: absolute; top: 0; left: 12%; right: 12%; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--line) 22%, var(--line) 78%, transparent);
+  }
+  .shead { margin-bottom: 26px; }
+  .shead .kicker {
+    display: block; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; margin-bottom: 10px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .shead h2 {
+    font-size: clamp(1.4rem, 3vw, 1.95rem); line-height: 1.16; margin: 0 0 10px;
+    letter-spacing: -0.025em; text-transform: none; color: var(--text); font-weight: 700;
+  }
+  .lede { color: #b9c0c9; max-width: 62ch; margin: 0; }
 
-  /* --- before / after ----------------------------------------------------- */
-  .ba { display: flex; gap: 16px; flex-wrap: wrap; align-items: stretch; margin: 18px 0 0; }
-  .ba figure { margin: 0; flex: 1 1 240px; min-width: 0; }
+  /* --- before / after ------------------------------------------------------ */
+  .ba { display: flex; gap: 18px; flex-wrap: wrap; align-items: stretch; margin: 20px 0 0; }
+  .ba figure { margin: 0; flex: 1 1 250px; min-width: 0; }
   .ba img {
     display: block; width: 100%; height: auto; border-radius: 10px;
     border: 1px solid var(--line); background: #fff;
   }
-  .ba figcaption { color: var(--muted); font-size: 0.84rem; margin-top: 8px; }
-  .ba figcaption b { color: var(--text); display: block; font-size: 0.9rem; }
-  .ba .arrow { align-self: center; color: var(--muted); font-size: 1.5rem; flex: 0 0 auto; }
+  .ba figcaption { color: var(--muted); font-size: 0.84rem; margin-top: 10px; }
+  .ba figcaption b { color: var(--text); display: block; font-size: 0.9rem; margin-bottom: 2px; }
+  .ba .arrow { align-self: center; color: var(--accent); font-size: 1.4rem; flex: 0 0 auto; }
+  .subhead { font-size: 0.94rem; margin: 30px 0 0; color: var(--text); font-weight: 600; }
 
-  /* --- the tool ----------------------------------------------------------- */
-  #make { scroll-margin-top: 16px; }
-  form { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+  /* --- the upload path ------------------------------------------------------ */
+  form.upload { display: flex; flex-direction: column; gap: 14px; margin-top: 20px; }
   label { font-weight: 600; font-size: 0.94rem; display: block; margin-bottom: 6px; }
-  .field { background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 14px; }
-  .field .hint { color: var(--muted); font-size: 0.82rem; margin: 6px 0 0; }
+  .field {
+    background: var(--panel); border: 1px solid var(--line); padding: 16px; border-radius: var(--radius);
+  }
+  .field .hint { color: var(--muted); font-size: 0.82rem; margin: 8px 0 0; }
   input[type=file] {
     width: 100%; padding: 11px; border-radius: 10px; border: 1px solid var(--line);
     background: var(--panel-2); color: var(--text); font-size: 0.94rem; font-family: inherit;
   }
-  #status { margin-top: 4px; font-size: 0.9rem; color: var(--muted); display: none; }
-  #status.done { color: var(--good); }
-  #status.failed { color: var(--bad); }
-  .bar { height: 3px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 10px; display: none; }
-  .bar i { display: block; height: 100%; width: 34%; background: var(--accent); animation: slide 1.5s ease-in-out infinite; }
+  #status, #shopStatus { margin-top: 6px; font-size: 0.9rem; color: var(--muted); display: none; }
+  #status.done, #shopStatus.done { color: var(--good); }
+  #status.failed, #shopStatus.failed { color: var(--bad); }
+  .bar {
+    height: 3px; background: var(--panel-2); border-radius: 3px;
+    overflow: hidden; margin-top: 12px; display: none;
+  }
+  .bar i {
+    display: block; height: 100%; width: 34%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    animation: slide 1.5s ease-in-out infinite;
+  }
   @keyframes slide { 0% { margin-left: -34%; } 100% { margin-left: 100%; } }
   .startline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: -4px; }
-  .field.shopify { border-color: var(--accent); padding: 18px; }
-  .urlrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
-  .urlrow input {
-    flex: 1 1 260px; min-width: 0; padding: 11px 12px; border-radius: 10px;
-    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
-    font: inherit; font-size: 0.95rem;
-  }
-  .urlrow input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .urlrow .btn { flex: 0 0 auto; }
-  #shopStatus { margin-top: 4px; font-size: 0.9rem; color: var(--muted); display: none; }
-  #shopStatus.done { color: var(--good); }
-  #shopStatus.failed { color: var(--bad); }
 
-  /* --- the columns table -------------------------------------------------- */
+  /* --- the columns table --------------------------------------------------- */
   .cols td:first-child, .cols td:nth-child(2) { white-space: nowrap; }
   .req { color: var(--good); font-weight: 600; font-size: 0.82rem; }
   .opt { color: var(--muted); font-size: 0.82rem; }
 
-  /* --- steps -------------------------------------------------------------- */
-  .steps { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 18px; counter-reset: step; padding: 0; }
+  /* --- steps --------------------------------------------------------------- */
+  .steps { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 22px; counter-reset: step; padding: 0; }
   .steps > li {
-    flex: 1 1 240px; list-style: none; background: var(--panel);
-    border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+    flex: 1 1 250px; list-style: none; position: relative;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 46%), var(--panel);
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 20px;
+    transition: transform .18s ease, border-color .18s ease;
   }
+  .steps > li:hover { transform: translateY(-3px); border-color: #37405a; }
   .steps > li::before {
     counter-increment: step; content: counter(step);
     display: inline-flex; align-items: center; justify-content: center;
-    width: 26px; height: 26px; border-radius: 50%; background: var(--accent);
-    color: #fff; font-size: 0.82rem; font-weight: 700; margin-bottom: 10px;
+    width: 30px; height: 30px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; font-size: 0.85rem; font-weight: 700; margin-bottom: 12px;
+    box-shadow: 0 6px 16px rgba(79, 124, 255, 0.3);
   }
-  .steps b { display: block; margin-bottom: 4px; }
+  .steps b { display: block; margin-bottom: 6px; font-size: 1rem; }
   .steps p { margin: 0; font-size: 0.9rem; color: var(--muted); }
   .steps a { font-size: 0.9rem; }
 
-  /* --- who / features ----------------------------------------------------- */
-  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 18px; }
+  /* --- who / features ------------------------------------------------------ */
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(238px, 1fr)); margin-top: 22px; }
   /* Four cards under auto-fit land 3 + 1, and the orphan reads as a mistake. */
   .grid.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .grid .card:hover { transform: translateY(-3px); border-color: #37405a; box-shadow: var(--shadow); }
   .grid .card h3 { margin: 0 0 6px; font-size: 0.98rem; }
   .grid .card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
 
-  /* --- faq ---------------------------------------------------------------- */
-  .faq { margin-top: 14px; }
-  .faq details { border-bottom: 1px solid var(--line); padding: 14px 2px; }
+  /* --- faq ----------------------------------------------------------------- */
+  .faq { margin-top: 18px; }
+  .faq details {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+    padding: 14px 16px; margin-bottom: 10px; transition: border-color .18s ease;
+  }
+  .faq details[open] { border-color: #35405c; }
   .faq details[open] summary { color: var(--text); }
   .faq summary {
-    cursor: pointer; font-weight: 600; font-size: 0.96rem; color: #cfd3d8;
+    cursor: pointer; font-weight: 600; font-size: 0.95rem; color: #cfd3d8;
     list-style: none; display: flex; justify-content: space-between; gap: 14px;
   }
   .faq summary::-webkit-details-marker { display: none; }
-  .faq summary::after { content: "+"; color: var(--muted); font-weight: 400; }
+  .faq summary::after { content: "+"; color: var(--accent); font-weight: 400; font-size: 1.1rem; line-height: 1; }
   .faq details[open] summary::after { content: "−"; }
   .faq details p { font-size: 0.92rem; color: var(--muted); margin: 10px 0 2px; }
 
-  .closer { text-align: center; padding: 28px 20px; }
-  .closer h3 { margin: 0 0 6px; font-size: 1.2rem; }
-  .closer p { margin: 0 auto; max-width: 52ch; }
-  .closer .cta { justify-content: center; margin-bottom: 0; }
-  .signoff { margin-top: 18px; font-size: 0.88rem; color: var(--muted); text-align: center; }
+  /* --- closer -------------------------------------------------------------- */
+  .closer {
+    text-align: center; padding: 40px 24px; border-radius: 20px;
+    border: 1px solid var(--line);
+    background:
+      radial-gradient(600px 220px at 50% 0%, rgba(79, 124, 255, 0.14), transparent 70%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 50%), var(--panel);
+  }
+  .closer h3 { margin: 0 0 8px; font-size: 1.35rem; letter-spacing: -0.02em; }
+  .closer p { margin: 0 auto 20px; max-width: 52ch; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: center; }
+  .signoff { margin-top: 22px; font-size: 0.86rem; color: var(--muted); text-align: center; }
 </style>
 {% endblock %}
 
 {% block body %}
   <div class="hero">
     <div class="hero-copy">
-      <h1>Turn your product list into a finished catalog PDF</h1>
+      <p class="eyebrow"><span class="dot"></span> Works with any Shopify store</p>
+      <h1>Your store, as a <span class="grad">catalog PDF</span>.</h1>
       <p class="lead">
-        <strong>On Shopify? Paste your store address and that is the whole job.</strong> topdf reads
-        your published products, prices and photos, picks up your logo and colours, and hands back a
-        laid-out catalog — no spreadsheet, no template, nothing to fill in.
-      </p>
-      <p class="lead soft">
-        Anywhere else, bring a product file and your own template page and it fills the boxes you drew.
-        No settings to get wrong, and the design stays yours.
+        Paste your store address. topdf reads your published products, prices and photos, picks up
+        your logo and colours, and hands back a laid-out catalog — no spreadsheet, no template,
+        nothing to fill in.
       </p>
 
-      <div class="cta">
-        <a class="btn" href="#make">Paste my store address</a>
-        <button type="button" class="btn ghost sample-btn">Try it with sample files</button>
+      <div class="paster">
+        <form id="shopForm" novalidate>
+          <div class="row">
+            <div class="field-wrap">
+              <svg class="globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/>
+              </svg>
+              <label for="storeUrl" class="visually-hidden" style="position:absolute;left:-9999px">Your Shopify store address</label>
+              <input type="url" id="storeUrl" name="store_url" placeholder="yourstore.com"
+                     autocomplete="url" spellcheck="false" required>
+            </div>
+            <button type="submit" class="btn" id="shopBtn">Build my catalog</button>
+          </div>
+        </form>
+        <div class="under">
+          <span>Free, no sign-up.</span>
+          <button type="button" class="sample-btn">or try it with sample files instead</button>
+        </div>
+        <div class="bar" id="shopBar"><i></i></div>
+        <div id="shopStatus"></div>
       </div>
+
       <ul class="trust">
-        <li>No sign-up</li>
-        <li>Free</li>
+        <li>Up to {{ shopify_max_products }} products</li>
+        <li>About a minute</li>
         <li>Nothing stored</li>
-        <li>.xlsx or .csv</li>
       </ul>
     </div>
+
     <figure class="hero-shot">
-      <img src="{{ prefix }}/static/samples/example-one-page-page1.png"
-           alt="A finished catalog page made by topdf: a teal brand bar across the top, then twelve product cards in a grid, each with a photo, a name, a short description and a price.">
-      <figcaption>A real export — 12 products, one template page, about ten seconds.</figcaption>
+      <img src="{{ prefix }}/static/samples/hero-export.png"
+           alt="A finished catalog page made by topdf: the shop's name and tagline on a dark teal brand bar, then twelve product cards in a grid, each with a photo, a name, a short description and a price.">
+      <figcaption>A real export, built the way your store's would be.</figcaption>
     </figure>
   </div>
 
   <!-- ------------------------------------------------------------------ -->
-  <section id="examples">
-    <h2>What comes out</h2>
-    <p class="lede">
-      Every picture below is real: a blank template on the left, and the finished PDF that came back
-      from it on the right. Both templates are downloadable, and nothing was touched afterwards.
-    </p>
+  <section id="how" class="ruled">
+    <div class="shead">
+      <span class="kicker">How it works</span>
+      <h2>Three steps, and you only do the first one</h2>
+      <p class="lede">On Shopify it is one step: paste the address. The rest is what topdf is doing
+        while you wait.</p>
+    </div>
+    <ol class="steps">
+      <li>
+        <b>Paste your store address</b>
+        <p>topdf reads your shop's own public product feed — every published item, with its photos,
+          prices and descriptions exactly as you wrote them.</p>
+      </li>
+      <li>
+        <b>It picks up your branding</b>
+        <p>Your logo off your homepage, your brand colour out of that logo, your shop name and
+          location for the footer. The page is drawn in your colours, not ours.</p>
+      </li>
+      <li>
+        <b>The catalog downloads</b>
+        <p>A cover page, then as many pages as your products need, each product sized and captioned
+          in its own box. Change your store, press it again.</p>
+      </li>
+    </ol>
+  </section>
 
-    <h3>One template page, repeated</h3>
+  <!-- ------------------------------------------------------------------ -->
+  <section id="examples" class="ruled">
+    <div class="shead">
+      <span class="kicker">What comes out</span>
+      <h2>Every picture here is a real export</h2>
+      <p class="lede">
+        A blank template on the left, and the finished PDF that came back from it on the right.
+        Both templates are downloadable, and nothing was touched afterwards.
+      </p>
+    </div>
+
+    <p class="subhead">One template page, repeated</p>
     <div class="ba">
       <figure>
         <img src="{{ prefix }}/static/samples/template-one-page-page1.png"
@@ -184,7 +317,7 @@
       </figure>
     </div>
 
-    <h3>A cover page, then a page that repeats</h3>
+    <p class="subhead">A cover page, then a page that repeats</p>
     <div class="ba">
       <figure>
         <img src="{{ prefix }}/static/samples/template-two-page-page1.png"
@@ -201,35 +334,17 @@
   </section>
 
   <!-- ------------------------------------------------------------------ -->
-  <section id="make">
-    <h2>Make one now</h2>
-
-    <div class="field shopify">
-      <label for="storeUrl">On Shopify? Just paste your store address</label>
-      <form id="shopForm" novalidate>
-        <div class="urlrow">
-          <input type="url" id="storeUrl" name="store_url" placeholder="yourstore.com" autocomplete="url"
-                 spellcheck="false" required>
-          <button type="submit" class="btn" id="shopBtn">Build my catalog</button>
-        </div>
-      </form>
-      <p class="hint">
-        No files, no spreadsheet, no template. It reads your published products, prices and photos,
-        picks up your logo and colours, and lays out up to {{ shopify_max_products }} products.
-        A small store takes a few seconds; a few hundred products takes a minute or two — keep the
-        tab open. Nothing is stored: the catalog is built and deleted as the download starts.
+  <section id="make" class="ruled">
+    <div class="shead">
+      <span class="kicker">Not on Shopify?</span>
+      <h2>Bring a product file and your own page design</h2>
+      <p class="lede">
+        Two files in, one PDF out. topdf finds the empty boxes you drew and fills them — so the
+        catalog looks like yours, because it is. Nothing you upload is kept.
       </p>
-      <div class="bar" id="shopBar"><i></i></div>
-      <div id="shopStatus"></div>
     </div>
 
-    <p class="lede" style="margin-top:26px">
-      <strong>Not on Shopify, or want your own page design?</strong> Two files in, one PDF out.
-      No account, and nothing you upload is kept — the files and the finished catalog are deleted
-      the moment the download starts.
-    </p>
-
-    <form id="genForm" novalidate>
+    <form id="genForm" class="upload" novalidate>
       <div class="field">
         <label for="excel">1. Product file</label>
         <input type="file" id="excel" name="excel" accept=".xlsx,.csv" required>
@@ -259,19 +374,22 @@
       <div id="status"></div>
     </form>
 
-    <p class="muted" style="margin-top:14px">
+    <p class="muted" style="margin-top:16px">
       Up to {{ max_mb }} MB per upload, {{ max_products }} products per run, a handful of catalogs an hour.
       Stuck? The <a href="{{ prefix }}/guide">guide</a> walks through both files and what every error means.
     </p>
   </section>
 
   <!-- ------------------------------------------------------------------ -->
-  <section id="columns">
-    <h2>The five columns</h2>
-    <p class="lede">
+  <section id="columns" class="ruled">
+    <div class="shead">
+      <span class="kicker">The five columns</span>
+      <h2>What the spreadsheet needs</h2>
+      <p class="lede">
       Two are required, three are optional — leave one out and it simply doesn't appear on the card.
       Header names are matched loosely, and column order doesn't matter.
-    </p>
+      </p>
+    </div>
     <div class="scroller">
       <table class="cols">
         <thead><tr><th>Column</th><th></th><th>What goes in it</th></tr></thead>
@@ -307,33 +425,12 @@
   </section>
 
   <!-- ------------------------------------------------------------------ -->
-  <section id="how">
-    <h2>How it works</h2>
-    <ol class="steps">
-      <li>
-        <b>Draw your page once</b>
-        <p>Your header, your colours, your footer — and empty boxes where the products go. Any
-          design tool that exports a PDF works.</p>
-        <p style="margin-top:8px"><a href="{{ prefix }}/static/samples/template-one-page.pdf" download>Start from a blank template →</a></p>
-      </li>
-      <li>
-        <b>Bring the product list</b>
-        <p>One row per product: a photo link and a name, plus a description, price or case size if
-          you want them printed.</p>
-        <p style="margin-top:8px"><a href="#columns">The five columns →</a></p>
-      </li>
-      <li>
-        <b>Get the catalog back</b>
-        <p>topdf measures the boxes on your page, fits the products into them, adds pages as the
-          list needs, and returns one PDF. Next month, change the sheet and press it again.</p>
-      </li>
-    </ol>
-  </section>
-
-  <!-- ------------------------------------------------------------------ -->
-  <section id="who">
-    <h2>Who it's for</h2>
-    <p class="lede">Anyone who sells physical products and rebuilds the same catalog every time the list changes.</p>
+  <section id="who" class="ruled">
+    <div class="shead">
+      <span class="kicker">Who it's for</span>
+      <h2>Anyone who rebuilds the same catalog every time the list changes</h2>
+      <p class="lede">If someone in your week is pasting product photos into a document one at a time, this is that job.</p>
+    </div>
     <div class="grid two">
       <div class="card">
         <h3>Wholesalers &amp; distributors</h3>
@@ -357,8 +454,11 @@
   </section>
 
   <!-- ------------------------------------------------------------------ -->
-  <section id="features">
-    <h2>What it does</h2>
+  <section id="features" class="ruled">
+    <div class="shead">
+      <span class="kicker">What it does</span>
+      <h2>No settings, because there is nothing to set</h2>
+    </div>
     <div class="grid">
       <div class="card">
         <h3>Your layout, not a theme</h3>
@@ -404,8 +504,11 @@
   </section>
 
   <!-- ------------------------------------------------------------------ -->
-  <section id="faq">
-    <h2>Questions</h2>
+  <section id="faq" class="ruled">
+    <div class="shead">
+      <span class="kicker">Questions</span>
+      <h2>The things people ask first</h2>
+    </div>
     <div class="faq">
       <details>
         <summary>Do I need a template, or does it design one for me?</summary>
@@ -458,16 +561,17 @@
   </section>
 
   <!-- ------------------------------------------------------------------ -->
-  <section id="closing">
+  <section id="closing" class="ruled">
     <div class="card closer">
       <h3>Make one and see</h3>
       <p class="muted">
-        The sample files are already loaded — one click and you'll have a finished catalog PDF in
-        about ten seconds, without uploading anything of your own.
+        On Shopify it takes one paste and about a minute. Not on Shopify? The sample files are
+        already loaded — one click and you'll have a finished catalog PDF without uploading
+        anything of your own.
       </p>
       <div class="cta">
-        <button type="button" class="btn sample-btn">Try it with sample files</button>
-        <a class="btn ghost" href="#make">Use my own files</a>
+        <a class="btn" href="#top">Paste my store address</a>
+        <button type="button" class="btn ghost sample-btn">Try it with sample files</button>
       </div>
     </div>
     <p class="signoff">
@@ -478,7 +582,7 @@
 {% endblock %}
 
 {% block foot %}
-  <p><a href="{{ prefix }}/guide">Guide: what to upload</a> · <a href="#make">Make a catalog</a></p>
+  <p><a href="{{ prefix }}/guide">Guide: what to upload</a> · <a href="#top">Make a catalog</a></p>
 {% endblock %}
 
 {% block scripts %}

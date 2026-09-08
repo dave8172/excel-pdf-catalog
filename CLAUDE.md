@@ -253,6 +253,55 @@ logs as `tool="topdf-shopify"` so this demand signal stays separable from the ot
 The Anthropic key lives in a gitignored `.env`, read by the service through `EnvironmentFile=-`
 — the `-` matters, because the service must still start when it is absent.
 
+## The landing page redesign (2026-09-08)
+
+The page shipped as one long column at a single margin, with the tool behind a *Paste my store
+address* button that scrolled somewhere else. A stranger arriving saw a wall of prose and a button
+whose job was to reveal the product. Three things changed.
+
+**The paster is the hero.** The store-address field is the first interactive thing on the page,
+above the fold, and there is exactly one of it — the form moved out of `#make` into the hero rather
+than being duplicated, because two `id="storeUrl"` would have broken the JS outright. `#make` is
+now only the upload path, introduced as *"Not on Shopify?"*.
+
+**The page has weather.** Two fixed layers on `body::before/::after`: three colour blooms for
+depth, and a 58px grid masked to fade out before it reaches the content — without the mask it tiles
+the viewport and reads as graph paper. Both are `position: fixed` (one paint, no scroll cost) and
+`pointer-events: none`. Buttons, the number badges and the section kickers take a single
+accent→`--accent-2` gradient; that violet is only ever a gradient partner, never a flat fill.
+
+**Sections have air and a shape.** 104px apart, each opening with a gradient kicker over a real
+headline, separated by a hairline that fades out at both ends. The old duplicate "how it works"
+section — written for the upload flow — was removed rather than renamed; the new one describes the
+paste-a-URL flow, and the guide still has the detail.
+
+**The nav is full-bleed and sticky.** Constraining the whole `nav.site` to `.wrap` painted a
+floating slab with hard edges against the background, which read as a rendering fault. The bar
+spans the viewport and its contents sit in `.wrap {{ self.wrapclass() }}`, so they align with the
+column on every page rather than only the landing one.
+
+### Three defects a headless probe found that reading the page did not
+
+Worth keeping the probe (`Runtime.evaluate` for duplicate ids, overflow and console errors, plus a
+sweep of every `src`/`href` for non-200s) — each of these is invisible in a screenshot:
+
+- **Two `id="how"`**, because the rewrite inserted a new section and the old one was below the
+  replaced range.
+- **`og:image` 404** — it pointed at `example-output-page1.png`, a *client* sample filename, so
+  every shared link had a broken preview from the 2026-09-07 split onward. Now the hero export.
+- **No favicon**, so every visit logged a `/favicon.ico` 404 and the browser tab was blank. Now an
+  inline SVG data URI: no file to serve, no route, no request.
+
+### The hero shot
+
+`scripts/make_public_samples.py` grew `write_hero_shot()`, which builds the hero image through
+**`shopify_catalog.build_template`** — the Shopify path's own generator — for an invented shop
+(Northgate Supply Co.). The before/after samples still say "YOUR LOGO HERE" and should: the blank
+template beside them is the thing you download and put your own logo on. In the hero that
+placeholder was wrong twice over — the headline sells the Shopify flow, and a placeholder logo is
+the clearest sign a page is a demo rather than a product. The shop is invented deliberately;
+publishing a real store's catalog as our own marketing is not ours to do, however good it looks.
+
 ## topdf's landing page (2026-09-07)
 
 `/topdf` was the upload form and nothing else, titled "Catalog PDF Exporter" with a
