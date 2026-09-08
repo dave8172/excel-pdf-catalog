@@ -292,6 +292,30 @@ sweep of every `src`/`href` for non-200s) — each of these is invisible in a sc
 - **No favicon**, so every visit logged a `/favicon.ico` 404 and the browser tab was blank. Now an
   inline SVG data URI: no file to serve, no route, no request.
 
+### The in/out carousel (2026-09-08)
+
+"What comes out" was two before/after pairs stacked under headings like *"One template page,
+repeated"*, and readers could not tell which picture was input and which was output. Eight images
+on screen at once, and the jargon named the mechanism rather than the outcome.
+
+It is now one carousel with three slides, each the same shape: **You give → You get**. The
+repetition is the teaching device, and only one pair is on screen at a time, so the eye compares
+two things instead of eight. Slide 1 is the Shopify path — its "give" is a mock of the hero's own
+address field, because the input is a URL and there is no picture of one.
+
+No library: three slides in a flex track, one `translateX`, dots built from the slide list. Details
+that are not obvious:
+
+- **Off-screen slides get `inert`**, or Tab walks focus into content nobody can see.
+- **The viewport's height follows the active slide.** A flex track stretches every slide to the
+  tallest one, which on a phone left slide 1 — one address field and one page — with 340px of dead
+  space beneath it. A `ResizeObserver` on the slides re-takes the height, because it is not final
+  until the images decode.
+- **The step is measured, not assumed** (`slides[0]` width + the 14px gap), so it is re-taken on
+  resize with the transition suppressed for that one frame.
+- Arrow keys are bound to the carousel element, not the document, so they do not fight the
+  browser's own scrolling; swipe requires horizontal intent so a vertical drag still scrolls.
+
 ### The hero shot
 
 `scripts/make_public_samples.py` grew `write_hero_shot()`, which builds the hero image through
