@@ -165,6 +165,48 @@ resolve-then-connect vetting as product images. The guard's own wording never re
 "port 8020 is not allowed" is an accurate answer to a port scan — so the reply says only that the
 store did not answer.
 
+### Scaling it (2026-09-08, same day)
+
+A store URL that took 62s server-side was cut by nginx at 60s and reported to the user as a
+timeout. Three things were wrong and all three are fixed; a fourth is still open.
+
+**nginx matched the wrong location.** `location = /topdf/generate` is an *exact* match with
+`proxy_read_timeout 300`; `/topdf/from-shopify` did not exist when that was written, so it fell
+through to `location /` and its 60s. The block is now `~ ^/topdf/(generate|from-shopify)$`. The
+work had actually finished — the usage log has `ok:true, ms:62344` for the run the user saw fail.
+
+**Rendered template pages were held one per output page.** A 150dpi A4 page is 6.5MB, so a
+1000-product catalog wanted 84 of them — 549MB against a `MemoryHigh` of 550M. `export_catalog`
+now renders lazily into a cache keyed by template page, and `build_template` emits **at most three
+physical designs** (cover, full inner, short final) with a `page_sources` map saying which design
+each output page uses. Memory is now a function of distinct designs, not catalog length.
+
+**Image downloads were serial and were ~90% of the wall clock.** `prefetch_images()` warms the
+exporter's on-disk cache through a 12-thread pool before the render loop. It is a *prewarm*, not a
+rewrite: the loop still reads the cache and still degrades a failed photo to a card without one.
+
+Measured after all three, on a cleared cache: **999 products, 135s, peak RSS 168MB, 84 pages,
+12.2MB.** 36 products went 62s → 7.4s.
+
+**Still open: the run is synchronous.** 135s holds a browser tab, holds the single export slot
+(everyone else gets a 503 meanwhile), and sits under gunicorn's 300s ceiling with no progress
+reporting. That is the next thing, and it is a job model, not a bigger timeout.
+
+### Three filter bugs the scale test exposed
+
+Each silently removed real products, which is worse than failing:
+
+- **`"return"` matched as a substring** against the concatenated type+tags blob hit the tag
+  `loop::returnable => true`, which sits on nearly every product of a shop using the Loop returns
+  app. It deleted **215 of Allbirds' 294 products**. `product_type` is now matched as a substring
+  (Shopify writes `return,package_protection` there) and tags only as **whole tags**.
+- **A zero price was treated as junk.** On a shipping product it means "price on request", which
+  is normal B2B — **18 of Metrixplus Instruments' 97 items** are quoted that way. Price is no
+  longer required; the card omits the line, as it does for a blank Price cell.
+- **Colourways published as separate products with identical titles** filled pages with the same
+  card. Tentree's 999 real products are 371 distinct titles. Deduped on normalised title, which
+  leaves shops that put the colour *in* the title (Allbirds) untouched.
+
 **Bounds.** `SHOPIFY_MAX_PRODUCTS = 36` is a wall-clock decision, not a layout one: every product
 is one cold CDN download, the whole run is synchronous behind the same single export slot, and 36
 measures at 35–40s over three pages. Product images are requested at `?width=700` and the logo at

@@ -38,6 +38,8 @@ import html as html_module
 import io
 import json
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -554,7 +556,22 @@ def read_brand(
 # Shopify carts routinely contain things that are not products: shipping
 # protection, gift cards, tips, warranties. They are recognisable without
 # guessing -- nothing physical ships, or the type says so outright.
-NON_PRODUCT_TYPES = ("gift card", "gift_card", "return", "package_protection", "insurance", "tip", "donation", "warranty")
+#
+# Matched against `product_type` only, as a substring, because that field is
+# written by the shop and reads like "return,package_protection" or "Gift Card".
+NON_PRODUCT_TYPES = (
+    "gift card", "gift_card", "giftcard", "package_protection", "shipping protection",
+    "insurance", "warranty", "donation",
+)
+
+# Tags are matched as *whole tags*, never as substrings. Getting that wrong is
+# not hypothetical: "return" as a substring matches `loop::returnable => true`,
+# a returns-app tag that sits on virtually every real product, and it silently
+# removed 215 of Allbirds' 294 items before anyone looked at the count.
+NON_PRODUCT_TAGS = frozenset({
+    "gift card", "gift_card", "giftcard", "package protection", "package_protection",
+    "shipping protection", "redo-package-protection", "route-protection", "tip", "donation",
+})
 
 
 def _plain_text(raw_html: str) -> str:
@@ -589,16 +606,22 @@ def is_real_product(product: dict) -> bool:
     if not (product.get("images") or []):
         return False  # a catalog card with no photo is not worth a slot
 
-    kind = f"{product.get('product_type') or ''} {' '.join(product.get('tags') or [])}".lower()
+    kind = str(product.get("product_type") or "").lower()
     if any(marker in kind for marker in NON_PRODUCT_TYPES):
+        return False
+    if {str(tag).strip().lower() for tag in product.get("tags") or []} & NON_PRODUCT_TAGS:
         return False
 
     # Nothing that ships is nothing to put in a product catalog. This is what
     # catches "Free Returns Coverage" and friends without a name blocklist.
-    if not any(variant.get("requires_shipping") for variant in variants):
-        return False
-
-    return any(_price_of(variant) for variant in variants)
+    #
+    # It deliberately does *not* also require a price. A price of 0.00 on a
+    # shipping product means "price on request", which is normal in B2B -- 18
+    # of Metrixplus Instruments' 97 items are quoted that way -- and dropping
+    # them silently removes real products from the owner's own catalog. The
+    # card simply omits the price line, exactly as it does for a blank Price
+    # cell in an uploaded spreadsheet.
+    return True
 
 
 def _price_of(variant: dict) -> str:
@@ -610,13 +633,27 @@ def _price_of(variant: dict) -> str:
 
 
 def product_rows(products: list[dict], *, symbol: str, limit: int) -> list[list[str]]:
-    """Turn Shopify's JSON into the five columns topdf already exports."""
+    """Turn Shopify's JSON into the five columns topdf already exports.
+
+    Products with an identical title are collapsed to the first. Shops publish
+    colourways as separate products, and where the colour is not in the title
+    the cards come out indistinguishable -- Tentree's "Lake Tentree T-Shirt"
+    fills three slots on one page with the same picture and price. A shop that
+    *does* put the colour in the title (Allbirds does) has distinct titles and
+    is untouched.
+    """
     rows: list[list[str]] = []
+    seen_titles: set[str] = set()
     for product in products:
         if len(rows) >= limit:
             break
         if not is_real_product(product):
             continue
+
+        title_key = re.sub(r"\s+", " ", str(product.get("title") or "")).strip().lower()
+        if title_key in seen_titles:
+            continue
+        seen_titles.add(title_key)
 
         images = product.get("images") or []
         variants = product.get("variants") or []
@@ -801,19 +838,36 @@ def _clip_words(text: str, limit: int) -> str:
 
 def build_template(
     brand: BrandProfile, store_domain: str, path: Path, product_count: int
-) -> list[list[tuple[int, int, int, int]]]:
+) -> tuple[list[list[tuple[int, int, int, int]]], list[int]]:
     """Draw a catalog template in the store's own branding, sized to the products.
 
     Page 1 is a cover carrying the logo and a title, so it holds nine products;
     every page after it is the denser twelve-box page. The last page gets
     exactly the boxes still needed.
+
+    Returns the boxes for each *output* page and which physical template page
+    each of those is drawn on. **At most three physical pages are ever drawn**
+    — cover, full inner, and a short final inner — however long the catalog is,
+    because every full inner page is the same picture. A thousand products is
+    then 84 output pages built from 3 renders rather than 84, which is the
+    difference between 20MB of memory and 549MB of it.
     """
+    pages = plan_pages(product_count)
+
+    # Physical designs, deduplicated: a full inner page is drawn once and used
+    # by every output page that is full.
+    designs: list[tuple[str, int]] = []
+    sources: list[int] = []
+    for spec in pages:
+        if spec not in designs:
+            designs.append(spec)
+        sources.append(designs.index(spec))
+
     page = pdf_canvas.Canvas(str(path), pagesize=A4)
     ink = brand.line
-    pages = plan_pages(product_count)
-    drawn: list[list[tuple[int, int, int, int]]] = []
+    per_design: list[list[tuple[int, int, int, int]]] = []
 
-    for kind, boxes in pages:
+    for kind, boxes in designs:
         if kind == "cover":
             page.setFillColor(HexColor(brand.primary))
             page.rect(0, PAGE_H - 132, PAGE_W, 132, stroke=0, fill=1)
@@ -837,12 +891,12 @@ def build_template(
 
             top, box_h = INNER_TOP, _box_height(INNER_TOP, INNER_ROWS)
 
-        drawn.append(_draw_boxes(page, brand, boxes, top=top, box_h=box_h))
+        per_design.append(_draw_boxes(page, brand, boxes, top=top, box_h=box_h))
         _draw_footer(page, brand, store_domain)
         page.showPage()
 
     page.save()
-    return drawn
+    return [per_design[index] for index in sources], sources
 
 
 def detected_boxes(path: Path) -> list[int]:
@@ -865,6 +919,71 @@ def detected_boxes(path: Path) -> list[int]:
 # ---------------------------------------------------------------------------
 # The whole thing
 # ---------------------------------------------------------------------------
+
+# Image downloads are the whole cost of a run: 36 products took 62s cold and
+# 8.5s once cached, so ~90% of the wall clock was waiting on a CDN one file at
+# a time. It is pure network wait, so threads are the right tool. Twelve is
+# chosen against the CDN's patience and this box's file handles, not its CPU.
+IMAGE_FETCH_WORKERS = 12
+
+
+def prefetch_images(urls: list[str], *, progress: Callable[[int, int], None] | None = None) -> None:
+    """Warm the exporter's on-disk image cache in parallel, before the render loop.
+
+    Deliberately a *prewarm* rather than a rewrite of the drawing code: the
+    exporter already checks the cache first and falls back to drawing a card
+    without a photo, so filling the cache concurrently makes the serial loop
+    fast while leaving its error handling exactly as it was. A failure here is
+    not raised -- it just means that one product is fetched (and fails) again
+    in the loop, which is where the existing handling lives.
+    """
+    import catalog_exporter
+    from catalog_exporter import cache_path_for_source, download_image, ensure_cache_dir
+
+    wanted = [url for url in dict.fromkeys(urls) if url.startswith(("http://", "https://"))]
+    if not wanted:
+        return
+    ensure_cache_dir(catalog_exporter_image_cache())
+
+    # Read the fetcher off the module rather than importing the name: `app.py`
+    # rebinds `IMAGE_FETCHER` at startup to the SSRF-guarded one, and a
+    # from-import here would capture whatever it was at import time -- which in
+    # the CLI is None. That mistake wrote empty files into the shared cache and
+    # every product silently lost its photo, so the fallback is now the same
+    # `download_image` the exporter itself falls back to.
+    fetcher = catalog_exporter.IMAGE_FETCHER or download_image
+    done = 0
+
+    def fetch(url: str) -> None:
+        target = cache_path_for_source(url)
+        if target.exists():
+            return
+        data = fetcher(url)
+        if not data:
+            return  # never cache an empty body; a poisoned entry never expires
+        # Write via a per-thread temporary file and rename: several products can
+        # share a photo, and two threads writing the same cache path directly
+        # would interleave into a corrupt image.
+        scratch = target.with_suffix(target.suffix + f".{threading.get_ident():x}.part")
+        scratch.write_bytes(data)
+        scratch.replace(target)
+
+    with ThreadPoolExecutor(max_workers=IMAGE_FETCH_WORKERS) as pool:
+        for future in as_completed([pool.submit(fetch, url) for url in wanted]):
+            done += 1
+            try:
+                future.result()
+            except Exception:
+                pass  # the render loop retries this one and degrades the card
+            if progress:
+                progress(done, len(wanted))
+
+
+def catalog_exporter_image_cache() -> Path:
+    from catalog_exporter import IMAGE_CACHE_DIR
+
+    return IMAGE_CACHE_DIR
+
 
 @dataclass
 class CatalogResult:
@@ -910,9 +1029,15 @@ def build_catalog(
 
     say("Drawing a template in the store's colours...")
     template = work_dir / "template.pdf"
-    boxes = build_template(brand, domain, template, len(rows))
+    boxes, sources = build_template(brand, domain, template, len(rows))
 
     product_file = write_product_file(rows, work_dir / "products.csv")
+
+    say(f"Fetching {len(rows)} product photos...")
+    prefetch_images(
+        [row[0] for row in rows],
+        progress=lambda done, total: say(f"Fetching product photos... {done} of {total}"),
+    )
 
     export_catalog(
         excel_path=product_file,
@@ -920,6 +1045,7 @@ def build_catalog(
         output_path=output_path,
         max_products=max_products,
         known_boxes=boxes,
+        page_sources=sources,
         status_callback=status_callback,
     )
 

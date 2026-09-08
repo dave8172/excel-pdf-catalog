@@ -517,6 +517,7 @@ def export_catalog(
     output_path: Path,
     max_products: int | None = None,
     known_boxes: list[list[tuple[int, int, int, int]]] | None = None,
+    page_sources: list[int] | None = None,
     status_callback: Callable[[str], None] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> Path:
@@ -535,6 +536,12 @@ def export_catalog(
     whose left edge happened to land on the grid's left column silently cost a
     whole column of products, and no tuning of the detector makes that class of
     accident impossible. Uploaded templates are unaffected and still measure.
+
+    `page_sources` goes with it: `known_boxes` is then indexed by *output* page
+    and `page_sources[i]` names the template page output page `i` is drawn on.
+    That lets a generated template hold two physical designs and still produce
+    eighty-four pages, which is the difference between 13MB of rendered
+    template and 549MB of it.
     """
 
     def say(message: str) -> None:
@@ -547,39 +554,57 @@ def export_catalog(
     page_count = get_pdf_page_count(template_pdf)
     say(f"Reading the template ({page_count} page{'s' if page_count != 1 else ''})...")
 
-    template_pages: list[Image.Image] = []
-    page_boxes: list[list[tuple[int, int, int, int]]] = []
+    # A rendered A4 page at 150dpi is 6.5MB, and this used to hold one per
+    # template page for the whole export. That is fine for the handful of pages
+    # somebody uploads and fatal for a generated one: an 84-page template (1000
+    # products) is 549MB of identical pictures on a box whose MemoryHigh is
+    # 550MB. Renders are now cached by template page, so the cost is the number
+    # of *distinct designs* — two, for every generated template — rather than
+    # the length of the catalog.
+    rendered_cache: dict[int, Image.Image] = {}
+
+    def template_page(index: int) -> Image.Image:
+        if index not in rendered_cache:
+            rendered_cache[index] = render_pdf_page(
+                template_pdf, index + 1, dpi=NORMAL_EXPORT_RENDER_DPI
+            )
+        return rendered_cache[index]
+
     try:
-        for number in range(1, page_count + 1):
-            rendered = render_pdf_page(template_pdf, number, dpi=NORMAL_EXPORT_RENDER_DPI)
-            template_pages.append(rendered)
-            page_boxes.append(
-                known_boxes[number - 1] if known_boxes is not None else find_product_boxes(rendered)
-            )
+        if known_boxes is not None:
+            # A template we drew: `known_boxes` is per *output* page and
+            # `page_sources` says which design each of those uses, so there is
+            # nothing to detect and nothing to plan.
+            plan = list(page_sources) if page_sources is not None else list(range(len(known_boxes)))
+            boxes_for_output = known_boxes
+        else:
+            page_boxes = [
+                find_product_boxes(template_page(index)) for index in range(page_count)
+            ]
+            if not any(page_boxes):
+                raise ValueError(
+                    "No product boxes were found in that template. The tool fills rectangles that are "
+                    "drawn as visible outlines and left empty inside — check the boxes are actually "
+                    "drawn (not just white space), and that nothing is sitting inside them."
+                )
 
-        if not any(page_boxes):
-            raise ValueError(
-                "No product boxes were found in that template. The tool fills rectangles that are "
-                "drawn as visible outlines and left empty inside — check the boxes are actually "
-                "drawn (not just white space), and that nothing is sitting inside them."
-            )
+            # The page that repeats is the last one with boxes on it — not simply
+            # the last one, or a template ending in a terms page would repeat that
+            # forever and never place another product.
+            repeating = next(index for index in range(page_count - 1, -1, -1) if page_boxes[index])
 
-        # The page that repeats is the last one with boxes on it — not simply
-        # the last one, or a template ending in a terms page would repeat that
-        # forever and never place another product.
-        repeating = next(index for index in range(page_count - 1, -1, -1) if page_boxes[index])
-
-        # Which template page each output page is built from.
-        plan: list[int] = []
-        remaining = len(products)
-        for index in range(page_count):
-            plan.append(index)
-            remaining -= len(page_boxes[index])
-            if remaining <= 0:
-                break
-        while remaining > 0:
-            plan.append(repeating)
-            remaining -= len(page_boxes[repeating])
+            # Which template page each output page is built from.
+            plan = []
+            remaining = len(products)
+            for index in range(page_count):
+                plan.append(index)
+                remaining -= len(page_boxes[index])
+                if remaining <= 0:
+                    break
+            while remaining > 0:
+                plan.append(repeating)
+                remaining -= len(page_boxes[repeating])
+            boxes_for_output = [page_boxes[index] for index in plan]
 
         say(f"Placing {len(products)} products across {len(plan)} page{'s' if len(plan) != 1 else ''}...")
 
@@ -588,8 +613,8 @@ def export_catalog(
             rendered_paths: list[Path] = []
             cursor = 0
             for position, template_index in enumerate(plan, start=1):
-                page = template_pages[template_index].copy()
-                for box in page_boxes[template_index]:
+                page = template_page(template_index).copy()
+                for box in boxes_for_output[position - 1]:
                     if cursor >= len(products):
                         break
                     product = products[cursor]
@@ -611,7 +636,7 @@ def export_catalog(
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
     finally:
-        for page in template_pages:
+        for page in rendered_cache.values():
             page.close()
 
     return output_path
