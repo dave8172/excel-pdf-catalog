@@ -41,11 +41,19 @@ from flask import (
 from PIL import Image
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+import brand_refiner
 import catalog_exporter
+import shopify_catalog
 import simple_catalog
 from catalog_exporter import TEMPLATE_FORM_VARIANTS, export_catalog, get_pdf_page_count
 from web.limits import Busy, ExportSlot, Quota
-from web.security import fetch_remote_image, looks_like_pdf, looks_like_text, looks_like_xlsx
+from web.security import (
+    ImageFetchError,
+    fetch_remote_image,
+    looks_like_pdf,
+    looks_like_text,
+    looks_like_xlsx,
+)
 
 APP_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = APP_DIR / "uploads"
@@ -71,6 +79,11 @@ ALLOWED_ORIGINS = {PUBLIC_BASE, ORIGIN_URL, CLIENT_URL}
 MAX_CONTENT_LENGTH = 30 * 1024 * 1024
 MAX_TEMPLATE_PAGES = 12
 MAX_PRODUCTS = 400
+# The Shopify path is bounded by wall-clock, not by page count: every product
+# is one image download from a CDN this box has no cache of, and the whole
+# thing is synchronous behind a single export slot. Measured at roughly two
+# seconds a product cold, so 36 is about a minute and three pages.
+SHOPIFY_MAX_PRODUCTS = 36
 SNIFF_BYTES = 8192
 # Strangers get a tight allowance; the client host is one person doing a known
 # weekly job and should never meet a quota wall mid-catalog.
@@ -283,6 +296,7 @@ def index() -> Response | str:
         public_base=PUBLIC_BASE,
         canonical=f"{PUBLIC_BASE}{URL_PREFIX}",
         max_products=MAX_PRODUCTS,
+        shopify_max_products=SHOPIFY_MAX_PRODUCTS,
         max_mb=MAX_CONTENT_LENGTH // (1024 * 1024),
     )
 
@@ -463,6 +477,96 @@ def generate_public() -> Response | tuple[Response, int]:
         )
 
     return run_export(tool="topdf", run=run)
+
+
+@app.route(f"{URL_PREFIX}/from-shopify", methods=["POST", "OPTIONS"])
+def generate_from_shopify() -> Response | tuple[Response, int]:
+    """A store address in, a finished catalog out — no files at either end.
+
+    Kept apart from `run_export` on purpose: that function's whole shape is
+    validating two uploads, and here there are none. What the two must share is
+    the quota and the export slot, because those bound the machine rather than
+    the feature.
+    """
+    if request.method == "OPTIONS":
+        return preflight_response()
+    if is_client_host():
+        return jsonify(error="Not found."), 404
+
+    tool = "topdf-shopify"
+    started = time.monotonic()
+    store_url = (request.form.get("store_url") or (request.get_json(silent=True) or {}).get("store_url") or "").strip()
+    if not store_url:
+        return jsonify(error="Paste your Shopify store address first."), 400
+
+    quota = public_quota
+    allowed, message = quota.check_and_record(quota.subject(request.remote_addr), f"generate:{tool}")
+    if not allowed:
+        record_usage(tool=tool, ok=False, reason="quota")
+        return jsonify(error=message), 429
+
+    sweep_old_jobs()
+    prune_image_cache()
+
+    job_id = uuid.uuid4().hex
+    job_dir = UPLOADS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    output_path = job_dir / "output.pdf"
+
+    try:
+        try:
+            with ExportSlot():
+                result = shopify_catalog.build_catalog(
+                    store_url,
+                    work_dir=job_dir,
+                    output_path=output_path,
+                    max_products=SHOPIFY_MAX_PRODUCTS,
+                    refine=brand_refiner.refine if brand_refiner.available() else None,
+                )
+        except Busy:
+            record_usage(tool=tool, ok=False, reason="busy")
+            return jsonify(
+                error="Someone else's catalog is generating right now. Please try again in a minute."
+            ), 503
+        except (shopify_catalog.StoreError, ImageFetchError, ValueError) as invalid:
+            # Everything the person who pasted the URL can actually act on:
+            # a store that is not reachable, not Shopify-served, or has nothing
+            # publishable in it. Those messages are already written for them.
+            record_usage(tool=tool, ok=False, reason="invalid_store", ms=round((time.monotonic() - started) * 1000))
+            return jsonify(error=str(invalid)), 400
+        except Exception:
+            reference = job_id[:8]
+            app.logger.exception("shopify export failed (ref %s)", reference)
+            record_usage(tool=tool, ok=False, reason="error", ms=round((time.monotonic() - started) * 1000))
+            return jsonify(
+                error=f"Building a catalog from that store failed. This is a bug — quote reference {reference}."
+            ), 500
+
+        payload = output_path.read_bytes()
+        download_name = f"{catalog_exporter.sanitize_filename(result.store_name)} catalog.pdf"
+        product_count = result.product_count
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    record_usage(
+        tool=tool,
+        ok=True,
+        ms=round((time.monotonic() - started) * 1000),
+        products=product_count,
+        out_kb=round(len(payload) / 1024),
+        via="proxy" if request.headers.get("Origin") == PUBLIC_BASE else "direct",
+    )
+    response = send_file(
+        io.BytesIO(payload),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=download_name,
+    )
+    # The page has no other way to say "14 products from Death Wish Coffee",
+    # since the body is the PDF itself.
+    response.headers["X-Catalog-Products"] = str(product_count)
+    response.headers["X-Catalog-Store"] = result.store_name[:80]
+    return response
 
 
 @app.route("/generate", methods=["POST", "OPTIONS"])

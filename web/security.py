@@ -23,6 +23,7 @@ from urllib.parse import urljoin, urlsplit
 USER_AGENT = "topdf.stuffs.bid catalog exporter (+https://stuffs.bid/topdf)"
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
+MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 12
 MAX_REDIRECTS = 3
 ALLOWED_PORTS = {80, 443}
@@ -85,7 +86,7 @@ def _resolve_public_address(host: str, port: int) -> tuple[str, int]:
     return sockaddr[0], family
 
 
-def _request_once(url: str) -> tuple[int, str | None, bytes]:
+def _request_once(url: str, accept: str, max_bytes: int) -> tuple[int, str | None, bytes]:
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise ImageFetchError(f"unsupported scheme {parts.scheme!r}")
@@ -122,7 +123,7 @@ def _request_once(url: str) -> tuple[int, str | None, bytes]:
         connection.request(
             "GET",
             target,
-            headers={"Host": host_header, "User-Agent": USER_AGENT, "Accept": "image/*"},
+            headers={"Host": host_header, "User-Agent": USER_AGENT, "Accept": accept},
         )
         response = connection.getresponse()
 
@@ -133,12 +134,12 @@ def _request_once(url: str) -> tuple[int, str | None, bytes]:
             raise ImageFetchError(f"HTTP {response.status}")
 
         declared = response.getheader("Content-Length")
-        if declared and declared.isdigit() and int(declared) > MAX_IMAGE_BYTES:
-            raise ImageFetchError("image is larger than the size limit")
+        if declared and declared.isdigit() and int(declared) > max_bytes:
+            raise ImageFetchError("response is larger than the size limit")
 
-        body = response.read(MAX_IMAGE_BYTES + 1)
-        if len(body) > MAX_IMAGE_BYTES:
-            raise ImageFetchError("image is larger than the size limit")
+        body = response.read(max_bytes + 1)
+        if len(body) > max_bytes:
+            raise ImageFetchError("response is larger than the size limit")
         if not body:
             raise ImageFetchError("empty response")
         return 200, None, body
@@ -155,17 +156,33 @@ def _request_once(url: str) -> tuple[int, str | None, bytes]:
             pass
 
 
-def fetch_remote_image(url: str) -> bytes:
-    """Fetch a product image, refusing anything that points inside the network."""
+def fetch_guarded(url: str, *, accept: str, max_bytes: int) -> tuple[str, bytes]:
+    """Fetch `url` through the guard, following redirects. Returns (final URL, body).
+
+    The guard matters more here than it did for images. An image URL arrives
+    inside a spreadsheet somebody assembled; a store URL is typed straight into
+    a box on the page, which is as direct a server-side request forgery handle
+    as this app has. Same resolve-then-connect vetting, one entry point.
+    """
     current = url
     for _hop in range(MAX_REDIRECTS + 1):
-        status, location, body = _request_once(current)
+        status, location, body = _request_once(current, accept, max_bytes)
         if status == 200:
-            return body
+            return current, body
         if not location:
             raise ImageFetchError(f"HTTP {status} without a redirect target")
         current = urljoin(current, location)
     raise ImageFetchError("too many redirects")
+
+
+def fetch_remote_image(url: str) -> bytes:
+    """Fetch a product image, refusing anything that points inside the network."""
+    return fetch_guarded(url, accept="image/*", max_bytes=MAX_IMAGE_BYTES)[1]
+
+
+def fetch_remote_document(url: str, *, accept: str = "text/html,application/json") -> tuple[str, bytes]:
+    """Fetch a page or JSON document under the same guard as an image."""
+    return fetch_guarded(url, accept=accept, max_bytes=MAX_DOCUMENT_BYTES)
 
 
 # ---------------------------------------------------------------------------

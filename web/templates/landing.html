@@ -67,6 +67,18 @@
   .bar i { display: block; height: 100%; width: 34%; background: var(--accent); animation: slide 1.5s ease-in-out infinite; }
   @keyframes slide { 0% { margin-left: -34%; } 100% { margin-left: 100%; } }
   .startline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: -4px; }
+  .field.shopify { border-color: var(--accent); padding: 18px; }
+  .urlrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .urlrow input {
+    flex: 1 1 260px; min-width: 0; padding: 11px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+    font: inherit; font-size: 0.95rem;
+  }
+  .urlrow input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .urlrow .btn { flex: 0 0 auto; }
+  #shopStatus { margin-top: 4px; font-size: 0.9rem; color: var(--muted); display: none; }
+  #shopStatus.done { color: var(--good); }
+  #shopStatus.failed { color: var(--bad); }
 
   /* --- the columns table -------------------------------------------------- */
   .cols td:first-child, .cols td:nth-child(2) { white-space: nowrap; }
@@ -120,19 +132,20 @@
 {% block body %}
   <div class="hero">
     <div class="hero-copy">
-      <h1>Turn a product spreadsheet into a finished catalog PDF</h1>
+      <h1>Turn your product list into a finished catalog PDF</h1>
       <p class="lead">
-        Upload your product list and your own template page. topdf finds the empty boxes you drew,
-        fits a product into each one — photo, name, description, price, case size — and hands back
-        the catalog, paginated and ready to send.
+        <strong>On Shopify? Paste your store address and that is the whole job.</strong> topdf reads
+        your published products, prices and photos, picks up your logo and colours, and hands back a
+        laid-out catalog — no spreadsheet, no template, nothing to fill in.
       </p>
       <p class="lead soft">
-        No settings to get wrong. Two files in, one PDF out, and the design stays yours.
+        Anywhere else, bring a product file and your own template page and it fills the boxes you drew.
+        No settings to get wrong, and the design stays yours.
       </p>
 
       <div class="cta">
-        <button type="button" class="btn sample-btn">Try it with sample files</button>
-        <a class="btn ghost" href="#make">Use my own files</a>
+        <a class="btn" href="#make">Paste my store address</a>
+        <button type="button" class="btn ghost sample-btn">Try it with sample files</button>
       </div>
       <ul class="trust">
         <li>No sign-up</li>
@@ -190,9 +203,29 @@
   <!-- ------------------------------------------------------------------ -->
   <section id="make">
     <h2>Make one now</h2>
-    <p class="lede">
-      Two files in, one PDF out. No account, and nothing you upload is kept — the files and the
-      finished catalog are deleted the moment the download starts.
+
+    <div class="field shopify">
+      <label for="storeUrl">On Shopify? Just paste your store address</label>
+      <form id="shopForm" novalidate>
+        <div class="urlrow">
+          <input type="url" id="storeUrl" name="store_url" placeholder="yourstore.com" autocomplete="url"
+                 spellcheck="false" required>
+          <button type="submit" class="btn" id="shopBtn">Build my catalog</button>
+        </div>
+      </form>
+      <p class="hint">
+        No files, no spreadsheet, no template. It reads your published products, prices and photos,
+        picks up your logo and colours, and lays out the first {{ shopify_max_products }} products.
+        Takes about a minute.
+      </p>
+      <div class="bar" id="shopBar"><i></i></div>
+      <div id="shopStatus"></div>
+    </div>
+
+    <p class="lede" style="margin-top:26px">
+      <strong>Not on Shopify, or want your own page design?</strong> Two files in, one PDF out.
+      No account, and nothing you upload is kept — the files and the finished catalog are deleted
+      the moment the download starts.
     </p>
 
     <form id="genForm" novalidate>
@@ -455,43 +488,54 @@
   // for either. Same-origin visits post to themselves.
   const ORIGIN = {{ origin | tojson }};
   const ENDPOINT = ORIGIN + '{{ prefix }}/generate';
+  const SHOPIFY_ENDPOINT = ORIGIN + '{{ prefix }}/from-shopify';
   const SAMPLES = '{{ prefix }}/static/samples';
 
   const form = document.getElementById('genForm');
-  const btn = document.getElementById('submitBtn');
+  const shopForm = document.getElementById('shopForm');
   // Three buttons run the sample: hero, form, and the closing card. All the
   // same action, so they are collected rather than named.
   const sampleBtns = Array.from(document.querySelectorAll('.sample-btn'));
-  const status = document.getElementById('status');
-  const bar = document.getElementById('bar');
-  let ticker = null;
 
-  function begin(message) {
-    clearInterval(ticker);  // the sample flow calls begin twice: fetch, then export
-    btn.disabled = true;
+  // The page now has two ways in — a store address and a pair of files — and
+  // they share everything except which button, bar and status line they drive.
+  const upload = {
+    btn: document.getElementById('submitBtn'), label: 'Generate PDF',
+    status: document.getElementById('status'), bar: document.getElementById('bar'), ticker: null,
+  };
+  const shopify = {
+    btn: document.getElementById('shopBtn'), label: 'Build my catalog',
+    status: document.getElementById('shopStatus'), bar: document.getElementById('shopBar'), ticker: null,
+  };
+  const flows = [upload, shopify];
+
+  function begin(flow, message) {
+    clearInterval(flow.ticker);  // the sample flow calls begin twice: fetch, then export
+    // One export at a time is enforced on the server, so the other way in is
+    // disabled too rather than left to earn a 503.
+    flows.forEach(other => { other.btn.disabled = true; });
     sampleBtns.forEach(b => { b.disabled = true; });
-    btn.textContent = 'Generating…';
-    status.className = '';
-    status.style.display = 'block';
-    bar.style.display = 'block';
+    flow.btn.textContent = 'Generating…';
+    flow.status.className = '';
+    flow.status.style.display = 'block';
+    flow.bar.style.display = 'block';
     const startedAt = Date.now();
     // A minute of silence reads as a hang, so the wait is always counted out.
     const tick = () => {
       const seconds = Math.round((Date.now() - startedAt) / 1000);
-      status.textContent = message + ' ' + seconds + 's — keep this tab open.';
+      flow.status.textContent = message + ' ' + seconds + 's — keep this tab open.';
     };
     tick();
-    ticker = setInterval(tick, 1000);
+    flow.ticker = setInterval(tick, 1000);
   }
 
-  function end(text, kind) {
-    clearInterval(ticker);
-    bar.style.display = 'none';
-    btn.disabled = false;
+  function end(flow, text, kind) {
+    clearInterval(flow.ticker);
+    flow.bar.style.display = 'none';
+    flows.forEach(other => { other.btn.disabled = false; other.btn.textContent = other.label; });
     sampleBtns.forEach(b => { b.disabled = false; });
-    btn.textContent = 'Generate PDF';
-    status.textContent = text;
-    status.className = kind || '';
+    flow.status.textContent = text;
+    flow.status.className = kind || '';
   }
 
   function saveBlob(blob, filename) {
@@ -505,10 +549,10 @@
     URL.revokeObjectURL(url);
   }
 
-  async function send(data, waitMessage) {
-    begin(waitMessage);
+  async function send(flow, endpoint, data, waitMessage) {
+    begin(flow, waitMessage);
     try {
-      const response = await fetch(ENDPOINT, { method: 'POST', body: data });
+      const response = await fetch(endpoint, { method: 'POST', body: data });
 
       if (!response.ok) {
         let message = 'Export failed (HTTP ' + response.status + ').';
@@ -516,7 +560,7 @@
           const body = await response.json();
           if (body && body.error) message = body.error;
         } catch (parseError) { /* non-JSON error page; keep the status line */ }
-        end(message, 'failed');
+        end(flow, message, 'failed');
         return;
       }
 
@@ -524,9 +568,15 @@
       const disposition = response.headers.get('Content-Disposition') || '';
       const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/);
       saveBlob(blob, match ? decodeURIComponent(match[1]) : 'catalog.pdf');
-      end('Done — PDF downloaded.', 'done');
+
+      // The body is the PDF, so what was actually built comes back in headers.
+      const count = response.headers.get('X-Catalog-Products');
+      const store = response.headers.get('X-Catalog-Store');
+      end(flow, count && store
+        ? 'Done — ' + count + ' products from ' + store + ', downloaded.'
+        : 'Done — PDF downloaded.', 'done');
     } catch (networkError) {
-      end('Export failed: the connection dropped. Please try again.', 'failed');
+      end(flow, 'Export failed: the connection dropped. Please try again.', 'failed');
     }
   }
 
@@ -535,17 +585,30 @@
     const excel = document.getElementById('excel');
     const template = document.getElementById('template');
     if (!excel.files.length || !template.files.length) {
-      end('Please choose both a product file and a template PDF.', 'failed');
+      end(upload, 'Please choose both a product file and a template PDF.', 'failed');
       return;
     }
-    send(new FormData(form), 'Generating…');
+    send(upload, ENDPOINT, new FormData(form), 'Generating…');
+  });
+
+  shopForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    const field = document.getElementById('storeUrl');
+    const value = field.value.trim();
+    if (!value) {
+      end(shopify, 'Paste your Shopify store address first.', 'failed');
+      return;
+    }
+    const data = new FormData();
+    data.append('store_url', value);
+    send(shopify, SHOPIFY_ENDPOINT, data, 'Reading your store and building the catalog…');
   });
 
   async function runSample() {
     // The hero and closing buttons are screens away from the progress line, so
     // bring the form into view before anything starts happening off-screen.
     document.getElementById('make').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    begin('Fetching the sample files…');
+    begin(upload, 'Fetching the sample files…');
     try {
       const [products, template] = await Promise.all([
         fetch(SAMPLES + '/products-template.xlsx').then(r => r.blob()),
@@ -554,9 +617,9 @@
       const data = new FormData();
       data.append('excel', products, 'sample catalog.xlsx');
       data.append('template', template, 'sample template.pdf');
-      await send(data, 'Generating the sample…');
+      await send(upload, ENDPOINT, data, 'Generating the sample…');
     } catch (error) {
-      end('Could not load the sample files. Please try again.', 'failed');
+      end(upload, 'Could not load the sample files. Please try again.', 'failed');
     }
   }
 

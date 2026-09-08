@@ -14,3 +14,6 @@ templates/*.png
 
 # Hosted app runtime state: quota database and the usage log.
 logs/
+
+# Local secrets (Anthropic key for the optional Shopify brand refiner).
+.env

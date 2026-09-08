@@ -516,6 +516,7 @@ def export_catalog(
     template_pdf: Path,
     output_path: Path,
     max_products: int | None = None,
+    known_boxes: list[list[tuple[int, int, int, int]]] | None = None,
     status_callback: Callable[[str], None] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> Path:
@@ -525,6 +526,15 @@ def export_catalog(
     left after the last one, the last page that *has* boxes repeats until they
     run out — which makes the common shape (a branded cover, then a denser page
     that repeats) work without the tool needing to be told about it.
+
+    `known_boxes` skips detection for a template this program drew itself, and
+    exists because measuring your own drawing is a category error. Detection is
+    how the tool copes with a *stranger's* PDF; when `shopify_catalog` generates
+    the template it already knows where every box is, to the point. Re-deriving
+    those coordinates from pixels only adds ways to be wrong — a brand logo
+    whose left edge happened to land on the grid's left column silently cost a
+    whole column of products, and no tuning of the detector makes that class of
+    accident impossible. Uploaded templates are unaffected and still measure.
     """
 
     def say(message: str) -> None:
@@ -543,7 +553,9 @@ def export_catalog(
         for number in range(1, page_count + 1):
             rendered = render_pdf_page(template_pdf, number, dpi=NORMAL_EXPORT_RENDER_DPI)
             template_pages.append(rendered)
-            page_boxes.append(find_product_boxes(rendered))
+            page_boxes.append(
+                known_boxes[number - 1] if known_boxes is not None else find_product_boxes(rendered)
+            )
 
         if not any(page_boxes):
             raise ValueError(

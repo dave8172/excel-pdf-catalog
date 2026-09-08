@@ -1,6 +1,6 @@
 # excel-to-pdf — two catalog tools, one process
 
-> A product spreadsheet plus a template PDF becomes a finished catalog PDF. **Two tools do that here, and keeping them apart is the point of the current design** — see the split below before changing anything.
+> A Shopify store URL — or a product spreadsheet plus a template PDF — becomes a finished catalog PDF. **Two tools do that here, and keeping them apart is the point of the current design** — see the split below before changing anything.
 
 ## The split (2026-09-07) — read this first
 
@@ -32,7 +32,9 @@ So there are now two tools, and they share only a process:
 
 - Repo: git@github.com:dave8172/excel-pdf-catalog.git (private)
 - Also mirrored on a Windows PC at `t:\Docs\Upwork\excel to pdf\excel-pdf` (VS Code + Claude Code). Edits can happen from either copy — GitHub is the source of truth; just `git pull` wherever you didn't make the change before editing there again. This VPS copy is the deployed runtime, so changes made here still need `git push` to reach the Windows copy.
-- Input: a product file (`.xlsx` or `.csv`) + a template PDF. Output: the composed catalog PDF, streamed back as a download.
+- Input: **either** a Shopify store URL (topdf reads the products and generates the template — see
+  the Shopify section) **or** a product file (`.xlsx`/`.csv`) plus a template PDF. Output either way:
+  the composed catalog PDF, streamed back as a download.
 - Nothing is retained. Each upload gets `uploads/<uuid>/`; the finished PDF is read into memory and the directory is deleted in the same request's `finally`, with an hourly sweep as a backstop.
 
 ## Where it lives
@@ -52,6 +54,8 @@ The app is served under the `/topdf` **path prefix** so both hostnames serve ide
 ```
 catalog_exporter.py            the CLIENT engine. 2,200 lines, shared with the CLI, no HTTP
 simple_catalog.py              the PUBLIC engine. Own columns, own card, own grid detection
+shopify_catalog.py             store URL -> products + branding + generated template -> catalog
+brand_refiner.py               the one optional model call: which image is the logo
 export_pdf.py                  command-line entry point (client engine)
 app.py                         both tools: host routing, validation, quotas, error mapping
 web/security.py                SSRF-guarded image fetch + upload sniffing
@@ -62,6 +66,7 @@ web/templates/guide.html       topdf's guide
 web/templates/client.html      the client tool, standalone: no shared base, noindex
 web/static/samples/            topdf's samples. Teal, workshop products, five columns
 web/client_static/samples/     the client tool's samples. Never served on a public host
+scripts/shopify_to_catalog.py  build a catalog from a store URL on the command line
 scripts/make_public_samples.py regenerates web/static/samples end to end, and verifies it
 scripts/make_samples.py        regenerates web/client_static/samples the same way
 ```
@@ -97,6 +102,77 @@ Pagination rule, chosen so it needs no setting: template pages are used in order
 last page that has boxes** repeats until the products run out. A cover plus a repeating inner
 page therefore just works. It has to be the last page *with boxes* — a template ending in a
 terms page would otherwise repeat that forever and place nothing.
+
+## Shopify: a store URL in, a catalog out (2026-09-08)
+
+topdf asked for two files a stranger does not have: a product list in our five columns, and a
+template PDF with empty boxes drawn on it. That is two jobs of work before the tool does any of
+its own, and it is why the tool was not actually usable by the people it is aimed at.
+`shopify_catalog.py` removes both by reading them off the store. `POST /topdf/from-shopify`, and
+the form is now the first thing on the landing page.
+
+**The pipeline is deterministic.** Everything on the page comes from Shopify's own public JSON:
+`/meta.json` for shop name, city, country and `money_format`; `/products.json` for titles,
+`body_html`, images and variant prices. No model touches the product data, the prices or the copy
+— the description is the store's own first sentence, clipped on a word boundary, which keeps the
+shop's voice and costs nothing. Junk items ("Free Returns Coverage", gift cards) are filtered on
+`requires_shipping` rather than a name blocklist.
+
+**One step resists rules, and only that step calls a model.** Deciding which of a dozen homepage
+images is the brand's own logo is a judgement call, not a parsing problem, and it was measured
+failing: Death Wish Coffee's page has four images tagged "logo" and three are press badges
+(BuzzFeed, HuffPost, Yahoo); Tentree's first match is a Science Based Targets certification mark.
+Each is fixable with one more rule, and the next store breaks the next rule. So `brand_refiner.py`
+gets that shortlist and nothing else — Haiku, one call, ~800 tokens, a fraction of a cent.
+
+**It is off by default and degrades to a complete catalog.** `read_brand(refine=None)` still
+produces a finished PDF in a neutral palette; the refiner is a quality knob we can measure, not a
+dependency in the middle of the pipeline. `scripts/shopify_to_catalog.py --compare` runs both ways
+and diffs the branding, which is how the split below was found.
+
+**The model picks the image; the pixels pick the colour.** Asked for both, the refiner named a
+near-black for Death Wish Coffee — whose logo it had just correctly identified, and whose red is
+right there in it. So `brand_colours_from()` quantizes the chosen logo and takes its most-used
+genuinely saturated tone, and the refiner's colours are only the fallback for a monochrome mark
+(Tentree, Allbirds). Judgement is what the model is for; measuring a colour is not.
+
+**Generated templates do not go through the detector.** `simple_catalog.export_catalog` takes an
+optional `known_boxes`, and this path passes the coordinates it drew at. Measuring your own drawing
+is a category error — detection exists to cope with a *stranger's* PDF. It was not theoretical: the
+logo is drawn at the left margin, the grid's left column starts at that same 42pt, and at 150dpi
+both land on pixel column 87 — the detector lost that column and a third of every page's products
+silently vanished. No tuning makes that class of accident impossible. Uploaded templates are
+untouched and still measure.
+
+**The template is sized to the products.** `plan_pages()` draws exactly as many boxes as there are
+products (cover 9, then 12 a page), because a template *we* generate with nine empty boxes on the
+back page is our defect, not the user's layout. The first run shipped exactly that.
+
+**A JPEG logo gets a plate.** `_baked_background()` samples the border: a transparent PNG has no
+background of its own and is composited onto the brand band, but a JPEG carries one (Shopify even
+pads them, `pad_color=ffffff`) and dropping that on a dark band looks like a sticker. A rounded
+plate in the logo's own background colour makes the same pixels read as a deliberate lockup.
+
+**Not every Shopify-backed store is reachable.** A headless storefront — Shopify for checkout,
+Next.js or Sanity for the site — serves neither endpoint (Gymshark 403s, Kotn 404s). That is
+detected and reported as such, rather than failing obscurely. Stock themes are the vast majority
+and they work.
+
+**SSRF matters more here than it did for images.** The store URL is typed straight into a box on
+the page, which is the most direct such handle this app has; `web/security.py` grew
+`fetch_guarded`/`fetch_remote_document` so the JSON and HTML fetches get the same
+resolve-then-connect vetting as product images. The guard's own wording never reaches the caller —
+"port 8020 is not allowed" is an accurate answer to a port scan — so the reply says only that the
+store did not answer.
+
+**Bounds.** `SHOPIFY_MAX_PRODUCTS = 36` is a wall-clock decision, not a layout one: every product
+is one cold CDN download, the whole run is synchronous behind the same single export slot, and 36
+measures at 35–40s over three pages. Product images are requested at `?width=700` and the logo at
+600, which is the single biggest saving in the run. Same public quota as the upload path; usage
+logs as `tool="topdf-shopify"` so this demand signal stays separable from the other two tools.
+
+The Anthropic key lives in a gitignored `.env`, read by the service through `EnvironmentFile=-`
+— the `-` matters, because the service must still start when it is absent.
 
 ## topdf's landing page (2026-09-07)
 
