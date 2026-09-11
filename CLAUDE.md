@@ -2,6 +2,17 @@
 
 > A Shopify store URL — or a product spreadsheet plus a template PDF — becomes a finished catalog PDF. **Two tools do that here, and keeping them apart is the point of the current design** — see the split below before changing anything.
 
+## Before shipping a visual change
+
+```
+node /root/projects/groundwork/preflight/render.mjs https://stuffs.bid/topdf
+```
+
+**[groundwork](../groundwork)** is the shared foundation across products — a render preflight, dated vendor facts (Cloudflare, Search Console, Dodo), and one rules file per domain. Technique that is true of the next product goes there; anything about catalogs stays here.
+
+Run 2026-09-11: the public page passes at phone, tablet and desktop. One finding, and it belongs to stuffboard rather than here — **an unknown path under the domain returns an error page that declares no `color-scheme`**, so Chrome on Android force-darkens it.
+
+
 ## The split (2026-09-07) — read this first
 
 The tool was built for one Upwork client's catalog and went public on 2026-09-06 exactly as it was. That was wrong: the public product was carrying **that client's design** — the profit-on-return and NEW badge artwork, the promotion card, their Shopify metafield column names, their fixed page grid, and sample assets built to imitate all of it. None of that is ours to publish.
