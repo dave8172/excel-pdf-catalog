@@ -5,7 +5,7 @@
 ## Before shipping a visual change
 
 ```
-node /root/projects/groundwork/preflight/render.mjs https://stuffs.bid/topdf
+node ../groundwork/preflight/render.mjs https://stuffs.bid/topdf
 ```
 
 **[groundwork](../groundwork)** is the shared foundation across products — a render preflight, dated vendor facts (Cloudflare, Search Console, Dodo), and one rules file per domain. Technique that is true of the next product goes there; anything about catalogs stays here.
