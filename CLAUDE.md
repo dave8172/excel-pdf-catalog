@@ -82,6 +82,29 @@ scripts/make_public_samples.py regenerates web/static/samples end to end, and ve
 scripts/make_samples.py        regenerates web/client_static/samples the same way
 ```
 
+## The third engine — `profex_catalog.py` (2026-09-12)
+
+**A store URL in, a *report* out** rather than a grid: a cover that leads with a number, a page of figures about the range, the products as cards, then the same lines as a grouped table with page numbers and a running brand.
+
+```bash
+./.venv/bin/python profex_catalog.py https://some-store.example -o catalogue.pdf --max 24
+```
+
+**The structure is not this repo's.** It comes from **profexpdf** — a separate, private report engine that knows about covers, figures, cards and grouped tables and nothing about shops. `profex_catalog.py` is the half that *is* ours: what counts as a product, what a price is, how a range is grouped, which four numbers earn a strip at the top, and every word on the page.
+
+**The line, and it is the point of the split:** if a change would need profexpdf to learn the word "product", it belongs in `profex_catalog.py`. If it would need `profex_catalog.py` to learn the word "millimetre", it belongs in profexpdf. Nothing shop-shaped goes back upstream — that is the same rule `catalog_exporter.py` lives under, one level up.
+
+`PROFEXPDF_HOME` points at that checkout; it defaults to a sibling directory named `profexpdf`.
+
+**It is a command, not a hosted path, and that is deliberate.** profexpdf prints through headless Chrome, which peaks at a few hundred MB. This box is 2GB with `MemoryHigh=550M` on one gunicorn process that already peaks near 350MB for a reportlab export — a Chrome inside a request is the thing that must not happen here. Wiring it into `/topdf` needs a separate worker with its own memory budget, or a queue, first.
+
+**What it needed from the store that the grid engine does not:** `product_type` and `vendor` (to group and to chart), the product handle (every name in the table links back to the page it was read from), and photos re-encoded through Pillow into local files, because the engine embeds local files or data URIs and never fetches a URL itself.
+
+Two things this shook out, both fixed here rather than there:
+
+- **`brand.tagline` is cut to a character count** for a template that has one line for it, which put *"…arabica and robusta co"* under a cover headline. `_sentence()` cuts at a sentence instead.
+- **Price bands are computed from the catalogue, not fixed.** A fixed $0–50/50–100 scale puts every line of a candle shop in the first bucket and every line of a furniture shop in the last; quintile edges rounded to a figure a person would say keep the shape visible at any price point.
+
 ## topdf's engine — `simple_catalog.py`
 
 Five columns, two required (`Image URL`, `Name`); `Description`, `Price` and `Case Size` are
